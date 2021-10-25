@@ -1,0 +1,4 @@
+requests
+notifiers
+selenium-wire
+selenium

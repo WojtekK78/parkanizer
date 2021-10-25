@@ -1,0 +1,41 @@
+[login]
+# Parkanizer data
+parkanizer_user = USER_NAME@eu.jll.com
+parkanizer_pass = PASSWORD
+
+[notifications]
+# General notification config
+# Notify/Remind via mail on this date when you have booking 
+notify_reminder_gmail = True
+# Notify/Remind via pushover on this date when you have booking 
+notify_reminder_pushover = False
+# Notify via mail upon succesfull booking just after booking
+notify_booking_outcome_gmail = True
+# Notify via pushover upon succesfull booking just after booking
+notify_booking_outcome_pushover = False
+
+[pushover]
+# Pushover notification config
+# Set to True if you want pushover notifications
+pushover_notify_enabled = False
+pushover_token = PUSHOVER_TOKEN
+pushover_user = PUSHOVER_USER
+pushover_device = PUSHOVER_DEVICE
+
+[gmail]
+# Gmail notification config
+# Set to True if you want gmail notifications
+gmail_notify_enabled = True
+# Gmail loign user
+gmail_user = GMAIL_LOGIN_USER@gmail.com
+# Gmail App password generated via https://support.google.com/accounts/answer/185833?p=InvalidSecondFactor&visit_id=637703152923445832-3140806609&rd=1
+gmail_password = GMAIL_PASS
+# notification recepient email
+gmail_to = WHOM_TO_NOTIFY@DOMAIN.com
+
+[booking]
+# define spots that are OK for you size wise, separate by comma
+Whitelist = 1.007,9.999,0.666
+# Define days for which to book parking spots where Monday =1, Sunday =7, separate by comma
+# Mon, Tue, Wed, Thu
+BookForWeekDay = 1,2,3,4
