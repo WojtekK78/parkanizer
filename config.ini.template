@@ -1,6 +1,6 @@
 [login]
 # Parkanizer data
-parkanizer_user = USER_NAME@eu.jll.com
+parkanizer_user = USER_NAME@youremail.com
 parkanizer_pass = PASSWORD
 
 [notifications]

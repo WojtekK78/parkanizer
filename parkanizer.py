@@ -429,7 +429,10 @@ if __name__ == "__main__":
 
     try:
         options = webdriver.ChromeOptions()
-        options.headless = True
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-proxy-certificate-handler")
+        options.add_argument("--disable-content-security-policy")
+        options.add_argument("--ignore-certificate-errors")
         driver = webdriver.Chrome(options=options)
     except Exception:
         logger.error("Error while initializing Chrome webdriver")
