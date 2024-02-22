@@ -50,7 +50,7 @@ def get_req_header():
             "Sec-Fetch-Site": "same-origin",
         }
     except Exception:
-        logger.error("Error while gettitng headers for Authoorization from Selenium")
+        logger.error("Error while gettitng headers for Authorization from Selenium")
         return
 
     return header
@@ -207,7 +207,7 @@ def parkanizer():
         )
         driver.find_element(By.ID, "password").send_keys(parkanizer_pass)
         driver.find_element(By.ID, "next").click()
-        wait.until(EC.url_contains("https://share.parkanizer.com"))
+        wait.until(EC.url_contains("https://share.parkanizer.com/welcome/employee"))
         logger.info("Succesfully logged in")
     except Exception:
         logger.error("Error while initializing selenium and logging into parkanizer")
