@@ -1,4 +1,4 @@
-# parkanizer/todaro
+# parkanizer/tidaro
 
 Parkanizer/tidaro auto reservation and notification solution. Currently company is named tidaro previously was known as parkanizer.
 
