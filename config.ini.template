@@ -39,3 +39,5 @@ Whitelist = 1.007,9.999,0.666
 # Define days for which to book parking spots where Monday =1, Sunday =7, separate by comma
 # Mon, Tue, Wed, Thu
 BookForWeekDay = 1,2,3,4
+#Time to wait in seconds between iterations to find spot on white list. Should not be too agressive.
+pauseTime = 15

@@ -3,7 +3,7 @@ from seleniumwire.utils import decode
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
-from datetime import datetime
+from datetime import datetime, timedelta
 from parkanizer_notifiers import pushover_notify
 from parkanizer_notifiers import gmail_notify
 import requests
@@ -11,6 +11,7 @@ import configparser
 import sys
 import logging
 import shelve
+import time
 from notifiers.logging import NotificationHandler
 
 
@@ -59,6 +60,9 @@ def get_req_header():
 def get_spots_status(headers, cookies):
     dict_spots_avaliable = {}
     dict_spots_avaliable.clear()
+    dict_spots_free = {}
+    dict_spots_free.clear()
+
 
     #    cookies = get_cookies()
     data = '{"parkingSpotZoneId":"fa44ef73-af90-48fb-b2f7-da513a25239e"}'
@@ -79,7 +83,7 @@ def get_spots_status(headers, cookies):
     try:
         for i in spots_avaliable["weeks"]:
             for row in i["week"]:
-                logger.info(
+                logger.debug(
                     (
                         "Date",
                         row["day"],
@@ -95,10 +99,11 @@ def get_spots_status(headers, cookies):
                 else:
                     ReservedSpot = row["reservedParkingSpotOrNull"]["name"]
                 dict_spots_avaliable[ReservationDate] = ReservedSpot
+                dict_spots_free[ReservationDate] = row["freeSpots"]
     except Exception:
         logger.error("Error while processing spots statuse receivd from web")
         return
-    return dict_spots_avaliable
+    return dict_spots_avaliable, dict_spots_free
 
 
 def make_booking(headers, cookies, daytotake):
@@ -218,8 +223,9 @@ def parkanizer():
     cookies = get_cookies()
 
     # Get status of what you have currently booked
-    spots_status = get_spots_status(headers=headers, cookies=cookies)
+    spots_status, free_status = get_spots_status(headers=headers, cookies=cookies)
     logger.info(("Spots status: " + str(spots_status)))
+    logger.info(("Free space status: " + str(free_status)))
 
     # Send reminder if you have already booked place for Today
     try:
@@ -244,7 +250,6 @@ def parkanizer():
         return
 
     # Start booking process
-    spots_checked = []
     for date in spots_status:
         # Setting status of alreadyreserved if we already have made reservation in past. If so then someone probably cancelled and there is no need to reserve for that day again
         try:
@@ -270,12 +275,21 @@ def parkanizer():
             # If our booked spot is not in our Whitelist release it and repeat booking untill we will get "Whitelisted"
             # or untill you have "checked" all spots and are getting same spots again (looped through all spaces and none is in our Whitelist)
             # Also if we have spot == None it means that booking was unsuccesful as there was no free spaces so we need to abort
-            while spot not in Whitelist and spot not in spots_checked and spot != None:
-                spots_checked.append(spot)
+            # 20240226 After change of Tidaro API they no longer loop through avaliable spot. Instead they alway provide one spot number until 
+            # somebody will book it. Only then they make next one avaliable.
+            # So if there is no good spot avaliablewe will wait 15 seconds refresh list of avaliable spots. If it has changed - somebody booked our
+            # non-whitelisted spot we will try again to check if avaliable one ie "Whitelisted"
+            i = 1 # loop counter
+            while spot not in Whitelist and spot != None and free_status[date] > 2 :
+                i += 1
+                time.sleep(pauseTime) # Wait 10 seconds maybe someone booked non-Whitelisted and there is new space to book
+                logger.info("Searching for Whitelisted spot on: " + str (date) + " Iteration: " + str(i) + " Time spend searching: " + str (timedelta(seconds=(i*pauseTime))) + " Free spaces: " + str(free_status[date]))
                 release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
                 spot = make_booking(
                     headers=headers, cookies=cookies, daytotake=str(date)
                 )
+                #Refresh number of free spots for that day. If there is 2 we need to take it and stop searching
+                not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
             if (
                 spot != None
             ):  # Send success confirmation if we have managed to books spot
@@ -383,7 +397,7 @@ def read_config():
     try:
         config = configparser.ConfigParser()
         config.read(str(sys.argv[1]))
-        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay
+        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime
         parkanizer_user = config["login"]["parkanizer_user"]
         parkanizer_user_id = parkanizer_user.partition("@")[0].replace(".", "")
         parkanizer_pass = config["login"]["parkanizer_pass"]
@@ -414,6 +428,7 @@ def read_config():
             int(numeric_string)
             for numeric_string in config["booking"]["BookForWeekDay"].split(",")
         ]
+        pauseTime = int(config["booking"]["pauseTime"])
     except Exception:
         print("Problems with initalization of config file")
         return
