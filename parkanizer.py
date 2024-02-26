@@ -12,6 +12,7 @@ import sys
 import logging
 import shelve
 import time
+import traceback
 from notifiers.logging import NotificationHandler
 
 
@@ -21,8 +22,9 @@ def get_cookies():
         selenium_cookies = driver.get_cookies()
         for cookie in selenium_cookies:
             cookies[cookie["name"]] = cookie["value"]
-    except Exception:
+    except Exception as error:
         logger.error("Error while gettitng cookies for authorization")
+        logger.error(error)
         return
 
     return cookies
@@ -50,8 +52,9 @@ def get_req_header():
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
         }
-    except Exception:
+    except Exception as error:
         logger.error("Error while gettitng headers for Authorization from Selenium")
+        logger.error(error)
         return
 
     return header
@@ -75,8 +78,9 @@ def get_spots_status(headers, cookies):
             data=data,
         )
         spots_avaliable = response.json()
-    except Exception:
+    except Exception as error:
         logger.error("Error while gettitng spot status from web")
+        logger.error(error)
         return
 
     # transform response into simple dictionary with date and info on space
@@ -100,8 +104,9 @@ def get_spots_status(headers, cookies):
                     ReservedSpot = row["reservedParkingSpotOrNull"]["name"]
                 dict_spots_avaliable[ReservationDate] = ReservedSpot
                 dict_spots_free[ReservationDate] = row["freeSpots"]
-    except Exception:
+    except Exception as error:
         logger.error("Error while processing spots statuse receivd from web")
+        logger.error(error)
         return
     return dict_spots_avaliable, dict_spots_free
 
@@ -122,8 +127,9 @@ def make_booking(headers, cookies, daytotake):
             data=data,
         )
         spot = response.json()
-    except Exception:
+    except Exception as error:
         logger.error("Error while gettitng reponse on making booking")
+        logger.error(error)
         return
 
     try:
@@ -133,8 +139,9 @@ def make_booking(headers, cookies, daytotake):
         else:
             spot = spot["receivedParkingSpotOrNull"]["name"]
             logger.debug(("Booked for ", daytotake, " spot ", spot))
-    except Exception:
+    except Exception as error:
         logger.error("Error while processing response results on making booking")
+        logger.error(error)
         return
 
     return spot
@@ -150,8 +157,9 @@ def release_spot(headers, cookies, daystoshare):
             cookies=cookies,
             data=data,
         )
-    except Exception:
+    except Exception as error:
         logger.error("Error while relesing inconvinient spot")
+        logger.error(error)
         return
     logger.debug(("Spot from date ", daystoshare, " released"))
     return response.status_code
@@ -214,8 +222,9 @@ def parkanizer():
         driver.find_element(By.ID, "next").click()
         wait.until(EC.url_contains("https://share.parkanizer.com/welcome/employee"))
         logger.info("Succesfully logged in")
-    except Exception:
+    except Exception as error:
         logger.error("Error while initializing selenium and logging into parkanizer")
+        logger.error(error)
         return
 
     # logged in, now getting headers and cookies
@@ -245,8 +254,9 @@ def parkanizer():
                 gmail=notify_reminder_gmail,
             )
             logger.info(("Sent reminder to user on booked spot for today."))
-    except Exception:
+    except Exception as error:
         logger.error("Error while sending info about already booked spot for today")
+        logger.error(error)
         return
 
     # Start booking process
@@ -258,10 +268,11 @@ def parkanizer():
             reservationshelve = shelve.open(shelve_db)
             alreadyreserved = reservationcheck in list(reservationshelve.values())
             reservationshelve.close()
-        except Exception:
+        except Exception as error:
             logger.error(
                 "Error while checking if reservation was already made in past for user"
             )
+            logger.error(error)
             return
         # Check if for days enabled in config we have already spot reserved, if there is not then start booking porcess
         if (
@@ -310,8 +321,9 @@ def parkanizer():
                     reservationshelve = shelve.open(shelve_db)
                     reservationshelve[reservationcheck] = reservationcheck
                     reservationshelve.close()
-                except Exception:
+                except Exception as error:
                     logger.error("Problem in writing reservation to storage")
+                    logger.error(error)
                     return
             else:  # Send failure information if we were unable to book spot
                 confirmation = (
@@ -359,7 +371,7 @@ def initialize_logger():
     # Create handlers
     notification_defaults = {
         "subject": "Parkanizer ERROR",
-        "to": "cdpkxj2h@anonaddy.me",
+        "to": gmail_to,
         "username": gmail_user,
         "password": gmail_password,
     }
@@ -429,8 +441,9 @@ def read_config():
             for numeric_string in config["booking"]["BookForWeekDay"].split(",")
         ]
         pauseTime = int(config["booking"]["pauseTime"])
-    except Exception:
+    except Exception as error:
         print("Problems with initalization of config file")
+        logger.error(error)
         return
 
 
@@ -438,14 +451,14 @@ if __name__ == "__main__":
     try:
         if str(sys.argv[1]).find(".ini") < 1:
             print('Please provide any ".ini" file as first parameter')
-    except Exception:
+    except Exception as error:
         print('Please provide any ".ini" file as first parameter')
         sys.exit()
 
     read_config()
     initialize_logger()
     logger.info("Initialization")
-
+    
     try:
         options = webdriver.ChromeOptions()
         options.add_argument("--headless=new")
@@ -454,7 +467,8 @@ if __name__ == "__main__":
         options.add_argument("--ignore-certificate-errors")
         options.add_argument('--allow-running-insecure-content')
         driver = webdriver.Chrome(options=options)
-    except Exception:
+    except Exception as error:
         logger.error("Error while initializing Chrome webdriver")
+        logger.error(error)
 
     parkanizer()
