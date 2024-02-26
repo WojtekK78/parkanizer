@@ -284,7 +284,7 @@ def parkanizer():
         # Check if for days enabled in config we have already spot reserved, if there is not then start booking porcess
         if (
             date.isoweekday() in BookForWeekDay
-            and spots_status[date] == "None"
+            and (spots_status[date] == "None" or spots_status[date] not in Whitelist)
             and not alreadyreserved
         ):
             # We need to book spot
