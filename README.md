@@ -1,6 +1,6 @@
-# parkanizer
+# parkanizer/tidaro
 
-Parkanizer auto reservation and notification solution
+Parkanizer/tidaro auto reservation and notification solution. Currently company is named tidaro previously was known as parkanizer.
 
 You can setup your week days that you want your bookings and preferred spots list separated by commas (i.e. wider spots).
 
