@@ -12,7 +12,6 @@ import sys
 import logging
 import shelve
 import time
-import traceback
 from notifiers.logging import NotificationHandler
 
 
@@ -25,6 +24,7 @@ def get_cookies():
     except Exception as error:
         logger.error("Error while gettitng cookies for authorization")
         logger.error(error)
+        sys.exit(1)
         return
 
     return cookies
@@ -55,6 +55,7 @@ def get_req_header():
     except Exception as error:
         logger.error("Error while gettitng headers for Authorization from Selenium")
         logger.error(error)
+        sys.exit(1)
         return
 
     return header
@@ -81,6 +82,7 @@ def get_spots_status(headers, cookies):
     except Exception as error:
         logger.error("Error while gettitng spot status from web")
         logger.error(error)
+        sys.exit(1)
         return
 
     # transform response into simple dictionary with date and info on space
@@ -107,6 +109,7 @@ def get_spots_status(headers, cookies):
     except Exception as error:
         logger.error("Error while processing spots statuse receivd from web")
         logger.error(error)
+        sys.exit(1)
         return
     return dict_spots_avaliable, dict_spots_free
 
@@ -130,6 +133,7 @@ def make_booking(headers, cookies, daytotake):
     except Exception as error:
         logger.error("Error while gettitng reponse on making booking")
         logger.error(error)
+        sys.exit(1)
         return
 
     try:
@@ -142,6 +146,7 @@ def make_booking(headers, cookies, daytotake):
     except Exception as error:
         logger.error("Error while processing response results on making booking")
         logger.error(error)
+        sys.exit(1)
         return
 
     return spot
@@ -160,6 +165,7 @@ def release_spot(headers, cookies, daystoshare):
     except Exception as error:
         logger.error("Error while relesing inconvinient spot")
         logger.error(error)
+        sys.exit(1)
         return
     logger.debug(("Spot from date ", daystoshare, " released"))
     return response.status_code
@@ -225,6 +231,7 @@ def parkanizer():
     except Exception as error:
         logger.error("Error while initializing selenium and logging into parkanizer")
         logger.error(error)
+        sys.exit(1)
         return
 
     # logged in, now getting headers and cookies
@@ -257,6 +264,7 @@ def parkanizer():
     except Exception as error:
         logger.error("Error while sending info about already booked spot for today")
         logger.error(error)
+        sys.exit(1)
         return
 
     # Start booking process
@@ -280,6 +288,7 @@ def parkanizer():
                 "Error while checking if reservation was already made in past for user"
             )
             logger.error(error)
+            sys.exit(1)
             return
         # Check if for days enabled in config we have already spot reserved, if there is not then start booking porcess
         if (
@@ -331,6 +340,7 @@ def parkanizer():
                 except Exception as error:
                     logger.error("Problem in writing reservation to storage")
                     logger.error(error)
+                    sys.exit(1)
                     return
             else:  # Send failure information if we were unable to book spot
                 confirmation = (
@@ -451,6 +461,7 @@ def read_config():
     except Exception as error:
         print("Problems with initalization of config file")
         logger.error(error)
+        sys.exit(1)
         return
 
 
@@ -477,5 +488,6 @@ if __name__ == "__main__":
     except Exception as error:
         logger.error("Error while initializing Chrome webdriver")
         logger.error(error)
+        sys.exit(1)
 
     parkanizer()
