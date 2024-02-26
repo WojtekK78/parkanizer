@@ -26,7 +26,7 @@ Sample crontab runnig at 00:05 daily
 Or newest alternative, after updating to Tidaro API's to situation when they don't reiterate through all open spots and you need to wait.
 Setup systemd service i.e. as following
 
-parkanizer.service
+/etc/systemd/system/parkanizer.service
 
 [Unit]
 Description=Parkanizer

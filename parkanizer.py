@@ -460,7 +460,6 @@ def read_config():
         pauseTime = int(config["booking"]["pauseTime"])
     except Exception as error:
         print("Problems with initalization of config file")
-        logger.error(error)
         sys.exit(1)
         return
 
