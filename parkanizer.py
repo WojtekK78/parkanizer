@@ -261,6 +261,13 @@ def parkanizer():
 
     # Start booking process
     for date in spots_status:
+        # If reserved spot is not Whitelisted for days we are looking and there is more than 2 free spots open release reservation and search for new Whitelisted spot
+        # then relese this spot, wait and 
+        if ( date.isoweekday() in BookForWeekDay and spots_status[date] not in Whitelist and free_status[date] >2 ):
+            release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
+            logger.info("Released non whitelisted spot: " + str(spots_status[date]) + " from: " + date.strftime("%A %B %d"))
+            time.sleep(pauseTime) # Wait as maybe someone booked non-Whitelisted and there is new space to book
+
         # Setting status of alreadyreserved if we already have made reservation in past. If so then someone probably cancelled and there is no need to reserve for that day again
         try:
             shelve_db = "./shelve/reservations_" + parkanizer_user_id + ".db"
@@ -293,7 +300,7 @@ def parkanizer():
             i = 1 # loop counter
             while spot not in Whitelist and spot != None and free_status[date] > 2 :
                 i += 1
-                time.sleep(pauseTime) # Wait 10 seconds maybe someone booked non-Whitelisted and there is new space to book
+                time.sleep(pauseTime) # Wait as maybe someone booked non-Whitelisted and there is new space to book
                 logger.info("Searching for Whitelisted spot on: " + str (date) + " Iteration: " + str(i) + " Time spend searching: " + str (timedelta(seconds=(i*pauseTime))) + " Free spaces: " + str(free_status[date]))
                 release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
                 spot = make_booking(
