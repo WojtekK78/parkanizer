@@ -12,6 +12,7 @@ import sys
 import logging
 import shelve
 import time
+import os
 from notifiers.logging import NotificationHandler
 
 
@@ -426,7 +427,7 @@ def read_config():
     try:
         config = configparser.ConfigParser()
         config.read(str(sys.argv[1]))
-        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime
+        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, shutdownOnSuccess
         parkanizer_user = config["login"]["parkanizer_user"]
         parkanizer_user_id = parkanizer_user.partition("@")[0].replace(".", "")
         parkanizer_pass = config["login"]["parkanizer_pass"]
@@ -458,6 +459,9 @@ def read_config():
             for numeric_string in config["booking"]["BookForWeekDay"].split(",")
         ]
         pauseTime = int(config["booking"]["pauseTime"])
+        shutdownOnSuccess = config["booking"].getboolean(
+            "shutdownOnSuccess"
+        )
     except Exception as error:
         print("Problems with initalization of config file")
         sys.exit(1)
@@ -490,3 +494,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     parkanizer()
+    
+    #Shutdown if succesful
+    if shutdownOnSuccess:
+        os.system('sudo shutdown +15')

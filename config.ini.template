@@ -41,3 +41,5 @@ Whitelist = 1.007,9.999,0.666
 BookForWeekDay = 1,2,3,4
 #Time to wait in seconds between iterations to find spot on white list. Should not be too agressive.
 pauseTime = 15
+#Shutdown upon exit i.e. if runing as service on independent system
+shutdownOnSuccess = False
