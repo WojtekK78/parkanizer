@@ -171,6 +171,17 @@ def release_spot(headers, cookies, daystoshare):
     logger.debug(("Spot from date ", daystoshare, " released"))
     return response.status_code
 
+def wait_for_new_spot(date,headers,cookies):
+    not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
+    avaliable_spots=free_status[date]
+    i = 0
+    while avaliable_spots == free_status[date]:
+        i += 1
+        logger.debug(("Waiting for change in avaliable spots. Date: ", str(date) ," Iteration: ", str(i), ", avaliable_spots: ", str(avaliable_spots), ", free_status[date]: ", str(free_status[date]) ))
+        time.sleep(pauseTime)
+        not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
+        #TODO Improve looping through avaliable spots maybe here returning which spot "day" has been changed
+        #date.isoweekday() in BookForWeekDay
 
 def logout(headers, cookies):
     #    cookies = get_cookies()
@@ -275,8 +286,6 @@ def parkanizer():
         if ( date.isoweekday() in BookForWeekDay and spots_status[date] not in Whitelist and free_status[date] >2 ):
             release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
             logger.info("Released non whitelisted spot: " + str(spots_status[date]) + " from: " + date.strftime("%A %B %d"))
-            time.sleep(pauseTime) # Wait as maybe someone booked non-Whitelisted and there is new space to book
-
         # Setting status of alreadyreserved if we already have made reservation in past. If so then someone probably cancelled and there is no need to reserve for that day again
         try:
             shelve_db = "./shelve/reservations_" + parkanizer_user_id + ".db"
@@ -307,12 +316,14 @@ def parkanizer():
             # somebody will book it. Only then they make next one avaliable.
             # So if there is no good spot avaliablewe will wait 15 seconds refresh list of avaliable spots. If it has changed - somebody booked our
             # non-whitelisted spot we will try again to check if avaliable one ie "Whitelisted"
-            i = 1 # loop counter
+            i = 0 # loop counter
             while spot not in Whitelist and spot != None and free_status[date] > 2 :
                 i += 1
-                time.sleep(pauseTime) # Wait as maybe someone booked non-Whitelisted and there is new space to book
                 logger.info("Searching for Whitelisted spot on: " + str (date) + " Iteration: " + str(i) + " Time spend searching: " + str (timedelta(seconds=(i*pauseTime))) + " Free spaces: " + str(free_status[date]))
                 release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
+                # Wait to get different count of Free spot before moving to booking
+                logger.info("Initiated wait for change in free spots avalaiable before next booking try")
+                wait_for_new_spot(date,headers=headers,cookies=cookies)
                 spot = make_booking(
                     headers=headers, cookies=cookies, daytotake=str(date)
                 )
@@ -399,7 +410,7 @@ def initialize_logger():
 
     c_handler = logging.StreamHandler()
     n_handler = NotificationHandler("gmail", defaults=notification_defaults)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logLevel)
 
     # Create formatters and add it to handlers
 
@@ -427,7 +438,7 @@ def read_config():
     try:
         config = configparser.ConfigParser()
         config.read(str(sys.argv[1]))
-        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, shutdownOnSuccess
+        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, shutdownOnSuccess, logLevel
         parkanizer_user = config["login"]["parkanizer_user"]
         parkanizer_user_id = parkanizer_user.partition("@")[0].replace(".", "")
         parkanizer_pass = config["login"]["parkanizer_pass"]
@@ -459,7 +470,8 @@ def read_config():
             for numeric_string in config["booking"]["BookForWeekDay"].split(",")
         ]
         pauseTime = int(config["booking"]["pauseTime"])
-        shutdownOnSuccess = config["booking"].getboolean(
+        logLevel = config["other"]["logLevel"]
+        shutdownOnSuccess = config["other"].getboolean(
             "shutdownOnSuccess"
         )
     except Exception as error:
