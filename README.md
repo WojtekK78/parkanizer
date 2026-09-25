@@ -8,17 +8,39 @@ PLEASE REMEBER ABOUT RELEASING UNSUED PARKING SPOTS - Remember that after you ha
 
 There is lots of speling mistakes, let them be :)
 
-- install dependencies sudo python -m pip install -r requirements.txt (reinstall requirements when updating, selenium-wire/blinker/pyOpenSSL are no longer needed)
-- install Chrome/Chromium. Selenium 4.6+ downloads matching chromedriver automatically; if that's not possible install chromedriver matching your Chrome version and make sure it's accesible in PATH source -> <https://googlechromelabs.github.io/chrome-for-testing/>
+## Installation
+
+- Python 3.9+ and Chrome or Chromium are needed. Chrome runs headless (no screen / DISPLAY needed).
+- install dependencies: `python3 -m pip install -r requirements.txt` (requests, notifiers, selenium 4.6+)
+- chromedriver: Selenium 4.6+ downloads chromedriver matching your Chrome automatically on first run (cached in ~/.cache/selenium of the user running the script, so that user needs writable home and internet access). If that's not possible install chromedriver matching your Chrome version yourself and make sure it's accesible in PATH, source -> <https://googlechromelabs.github.io/chrome-for-testing/>. An old chromedriver left in PATH that doesn't match Chrome version breaks start ("SessionNotCreatedException") - remove or update it.
 - running as root or in Docker: set chromeArguments = --no-sandbox in [other] section of config
 - Setup confg in any .ini file i.e. "config.ini" based on provided template "config.ini.template" file
-- Run as: "python parkanizer.py config.ini"
-- if running headless on linux you can use following guides to setup Chromium wbedriver & to allow for it to work in Crontab (Display:0)
- 	- <https://tecadmin.net/setup-selenium-chromedriver-on-ubuntu/>
- 	- <https://newbedev.com/run-selenium-with-crontab-python>
-Two final technical details to run headless in crontab-python
- 1) I've had to run it as user's crontab not root (not: sudo crontab -e)
- 2) I've changed chown of chromium directory to my username i.e. sudo chown myuser:mysuer /usr/bin/chromedriver
+- Run as: `python3 parkanizer.py config.ini`
+- First run: set `logLevel = INFO` to see login, parking zones avaliable to you and decisions for every date, switch back to WARNING later.
+
+### Updating existing installation (from version before 2026-09)
+
+Tidaro changed login page and API in 2026, older versions can't log in (stuck on 'https://share.parkanizer.com/' with title 'Tidaro') or fail with 400/403 errors. After `git pull`:
+
+1. `python3 -m pip install -r requirements.txt`
+2. optional cleanup, not used anymore: `python3 -m pip uninstall selenium-wire blinker` (pyOpenSSL only if nothing else on your system needs it)
+3. config: remove `parkingSpotZoneId = fa44ef73-af90-48fb-b2f7-da513a25239e` if you have it - that zone answers 403 now. Without the option first zone avaliable to you is used; to use other one copy its id from the log line "Parking zones avaliable ..." (logLevel = INFO).
+4. remove chromedriver you installed manually if it's older than your Chrome (see above), or keep it updated.
+
+Nothing else in config changes, stored reservations in ./shelve are kept.
+
+### Config options
+
+See config.ini.template for all options with comments. Optional ones (default used when missing):
+
+- [booking] maxSearchTime - seconds to search for Whitelisted spot, then any spot is taken (default 3600, 0 = no limit)
+- [booking] parkingSpotZoneId - parking zone (level) to book in (default: first zone avaliable to you, all zones with ids are logged at INFO)
+- [booking] minFreeSpots - search for Whitelisted spot only while more than this spots are free (default 2)
+- [other] chromeArguments - extra Chrome arguments separated by comma, i.e. --no-sandbox
+
+### Known limitation
+
+Tidaro web app can protect booking with reCAPTCHA (per company setting, currently off). If it gets turned on script can't book anymore and every run ends with error "Parkanizer refused booking ... with status 'ChallengeTokenMissing'" (or 'ManualChallengeRequired') - book manually then.
 
 ## How booking decisions are made
 
@@ -67,32 +89,51 @@ Optionally you can name versions with tags, i.e. `git tag v1.0.0-original aa81f9
 
 Stored reservations in ./shelve stay compatible both ways: newer versions read what older ones wrote and the other way round.
 
-## Scheduling
+## Scheduling / deployment
 
-Sample crontab runnig at 00:05 daily
-  
-5 0 ** * DISPLAY=:0 cd /home/myuser/python/parkanizer/ && python3 parkanizer.py config.ini >> parkanizer.log 2>&1
+Run it from the directory with the code (reservations are stored in ./shelve relative to it). Use user account, not root (root needs --no-sandbox). Chrome is headless, no DISPLAY / X server needed.
 
-Or newest alternative, after updating to Tidaro API's to situation when they don't reiterate through all open spots and you need to wait.
-Setup systemd service i.e. as following
+Option 1 - crontab of your user (`crontab -e`, not sudo), i.e. daily at 00:05. With maxSearchTime run can last up to that long:
+
+    5 0 * * * cd /home/myuser/python/parkanizer && /usr/bin/python3 parkanizer.py config.ini >> parkanizer.log 2>&1
+
+Option 2 - systemd service, runs once at boot and restarts on error (use together with shutdownOnSuccess = True on machine dedicated for it, or with a timer).
 
 /etc/systemd/system/parkanizer.service
 
-[Unit]
-Description=Parkanizer
-After=network.target
-After=systemd-user-sessions.service
-After=network-online.target
+    [Unit]
+    Description=Parkanizer
+    Wants=network-online.target
+    After=network-online.target
 
-[Service]
-WorkingDirectory=/DIRECTORY/TO/YOUR/PARKANIZER
-ExecStart=python3 parkanizer.py YOUR_CONFIG.ini
-Environment="DISPLAY=:0"
-User=YOURUSER
-Group=YOURGROUP
-Restart=on-failure
-TimeoutSec=30
-RestartSec=120
+    [Service]
+    Type=simple
+    WorkingDirectory=/DIRECTORY/TO/YOUR/PARKANIZER
+    ExecStart=/usr/bin/python3 parkanizer.py YOUR_CONFIG.ini
+    User=YOURUSER
+    Group=YOURGROUP
+    Restart=on-failure
+    RestartSec=120
 
-[Install]
-WantedBy=multi-user.target
+    [Install]
+    WantedBy=multi-user.target
+
+Enable and check it:
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now parkanizer.service
+    journalctl -u parkanizer.service -f
+
+To run it every day instead of once per boot add /etc/systemd/system/parkanizer.timer and enable the timer (`sudo systemctl enable --now parkanizer.timer`) instead of the service:
+
+    [Unit]
+    Description=Run Parkanizer daily
+
+    [Timer]
+    OnCalendar=*-*-* 00:05
+    Persistent=true
+
+    [Install]
+    WantedBy=timers.target
+
+Exit code is 0 on success, 1 on error (error is logged and emailed when gmail is enabled).
