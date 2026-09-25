@@ -3,7 +3,13 @@ import subprocess
 import sys
 import os
 
+from unittest import mock
+
+import pytest
+import responses
+
 import parkanizer
+from fake_api import FakeParkanizer
 from conftest import MON, TUE, WED, THU, FRI
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -138,18 +144,16 @@ def test_missing_today_in_status_does_not_crash(app):
     assert fake.count("logout") == 1
 
 
-def test_booking_decision():
-    parkanizer.BookForWeekDay = [1, 2, 3, 4]
-    parkanizer.Whitelist = ["1.007"]
-    parkanizer.minFreeSpots = 2
+def test_booking_decision(app):
+    app.monkeypatch.setattr(parkanizer.cfg, "whitelist", ["1.007"])
     d = parkanizer.booking_decision
-    assert d(MON, "None", 10, False) is None
+    assert d(MON, None, 10, False) is None
     assert d(MON, "2", 10, False) is None
     assert d(MON, "2", 10, True) is None
-    assert d(MON, "None", 10, True).startswith("spot was previously reserved")
+    assert d(MON, None, 10, True).startswith("spot was previously reserved")
     assert d(MON, "1.007", 10, False).startswith("Whitelisted")
     assert d(MON, "2", 2, False).startswith("non Whitelisted")
-    assert d(FRI, "None", 10, False) == "day not configured for booking"
+    assert d(FRI, None, 10, False) == "day not configured for booking"
 
 
 def run_main(*args):
@@ -221,17 +225,12 @@ def test_server_errors_and_network_errors_are_retried(app):
 
 
 def test_persistent_errors_stop_the_run(app):
-    import pytest
-
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(parkanizer.ParkanizerError, match="spot status"):
         app.run({MON: {"pool": ["1.007", "2", "3"]}}, failures=["conn"] * 10)
-    assert exc.value.code == 1
 
 
 def test_client_error_is_not_retried(app):
-    import pytest
-
-    with pytest.raises(SystemExit):
+    with pytest.raises(parkanizer.ParkanizerError):
         app.run({MON: {"pool": ["1.007", "2", "3"]}}, failures=[400, 400])
     # second failure not consumed -> the request was not repeated
     assert app.fake.failures == [400]
@@ -255,7 +254,7 @@ def test_search_time_limit_takes_offered_spot(app):
 
 
 def test_max_search_time_default(app):
-    assert parkanizer.maxSearchTime == 3600
+    assert parkanizer.cfg.max_search_time == 3600
 
 
 def test_zone_id_default_and_json_payload(app):
@@ -289,3 +288,55 @@ def test_new_authorization_used_after_relogin(app):
     assert fake.auth_headers[0] == "Bearer 1"
     assert set(fake.auth_headers[1:]) == {"Bearer 2"}
     assert parkanizer.http.cookies.get("c") == "1"
+
+
+def test_reservation_storage_opened_once_per_run(app):
+    opened = []
+    real_open = shelve.open
+    app.monkeypatch.setattr(
+        parkanizer.shelve, "open", lambda *a, **k: opened.append(a) or real_open(*a, **k)
+    )
+    app.run(
+        {
+            MON: {"pool": ["1.007", "2", "3"]},
+            TUE: {"pool": ["9.999", "2", "3"]},
+            WED: {"pool": ["1.007", "2", "3"]},
+        }
+    )
+    assert len(opened) == 1
+    assert shelf_keys() == {MON.isoformat(), TUE.isoformat(), WED.isoformat()}
+
+
+def test_config_error_is_reported(tmp_path):
+    bad = tmp_path / "bad.ini"
+    bad.write_text("[login]\n")
+    with pytest.raises(parkanizer.ParkanizerError, match="config file"):
+        parkanizer.read_config(str(bad))
+
+
+def test_main_returns_error_and_closes_chrome_when_login_fails(app):
+    browser = mock.MagicMock()
+    app.monkeypatch.setattr(parkanizer, "start_driver", lambda: setattr(parkanizer, "driver", browser))
+
+    def failing_login():
+        with parkanizer.step("Error while initializing selenium and logging into parkanizer"):
+            raise TimeoutError("page did not load")
+
+    app.monkeypatch.setattr(parkanizer, "login", failing_login)
+    assert parkanizer.main(["parkanizer.py", str(app.config_file)]) == 1
+    browser.quit.assert_called_once()
+    assert parkanizer.driver is None
+    # one error email with the step and the cause (was two separate emails before)
+    assert len(app.error_emails) == 1
+    assert "logging into parkanizer: TimeoutError('page did not load')" in app.error_emails[0]
+
+
+def test_main_success(app):
+    browser = mock.MagicMock()
+    app.monkeypatch.setattr(parkanizer, "start_driver", lambda: setattr(parkanizer, "driver", browser))
+    fake = FakeParkanizer({MON: {"pool": ["1.007", "2", "3"]}})
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        fake.register(rsps)
+        assert parkanizer.main(["parkanizer.py", str(app.config_file)]) == 0
+    assert fake.days[MON]["reserved"] == "1.007"
+    browser.quit.assert_called_once()
