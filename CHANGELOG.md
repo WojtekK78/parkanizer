@@ -2,6 +2,12 @@
 
 Each entry is one squashed commit on main, so every version can be checked out or reverted on its own (see README "Versions and going back to previous version").
 
+## 8. Follow current Tidaro API
+- get-spots and take-spot-from-marketplace send bookingTimeInterval (whole day) like the web app; get-spots failed with 400 "invalidProperties: bookingTimeInterval" without it.
+- parkingSpotZoneId not set -> first zone avaliable to user is used (from get-parking-spot-zones), all zones with ids are logged at INFO. The previously hardcoded default zone answers 403 for current accounts.
+- Booking answered with unexpected status (i.e. ChallengeTokenMissing / ManualChallengeRequired if Tidaro turns on reCAPTCHA for booking) ends run with error naming the status, instead of being reported as "no free spots".
+- Logout uses GET like the web app (POST answered 403 and logged a warning, emailed when gmail is on, on every run).
+
 ## 7. Login works again with current Tidaro web app
 - Web app now loads ~11MB of scripts before redirecting to login page. Through selenium-wire's proxy they took ~25s and the app gave up (requirejs "Load timeout for modules: main"), so login never started.
 - selenium-wire removed: Authorization header is read from Chrome's own network log (performance log), Chrome connects directly. blinker/pyOpenSSL pins and their install problems are gone with it.

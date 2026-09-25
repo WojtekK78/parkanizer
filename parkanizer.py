@@ -28,7 +28,11 @@ from notifiers.logging import NotificationHandler
 API_URL = "https://share.parkanizer.com/api/"
 # Request made by web app after login, it carries Authorization header we need
 EMPLOYEE_CONTEXT_REQUEST = r"/api/get-employee-context"
-DEFAULT_ZONE_ID = "fa44ef73-af90-48fb-b2f7-da513a25239e"
+# Whole day booking, as sent by web app (ISO 8601 durations from midnight)
+FULL_DAY = {"fromBookingTime": "P0DT00H00M", "toBookingTime": "P1DT00H00M"}
+# take-spot-from-marketplace statuses that are normal outcomes, any other one (i.e. ChallengeTokenMissing,
+# ManualChallengeRequired when Tidaro turns on reCAPTCHA for booking) means script can't book
+TAKE_SPOT_OK_STATUSES = (None, "Reserved", "NoSpotsFound")
 
 # Seconds to wait for Parkanizer to answer a single request
 REQUEST_TIMEOUT = 30
@@ -76,6 +80,7 @@ class Config:
     book_for_weekdays: list
     pause_time: int
     max_search_time: int
+    # None = first zone offered by Parkanizer, resolved after login
     zone_id: str
     min_free_spots: int
     log_level: str
@@ -118,7 +123,7 @@ def read_config(path):
             pause_time=int(booking["pauseTime"]),
             # 0 = search without time limit
             max_search_time=booking.getint("maxSearchTime", fallback=3600),
-            zone_id=booking.get("parkingSpotZoneId", fallback=DEFAULT_ZONE_ID),
+            zone_id=booking.get("parkingSpotZoneId", fallback="").strip() or None,
             min_free_spots=booking.getint("minFreeSpots", fallback=2),
             log_level=other["logLevel"],
             # extra Chrome command line arguments, i.e. --no-sandbox when running as root/in Docker
@@ -354,10 +359,25 @@ def api_post(path, payload):
             time.sleep(wait)
 
 
+def get_zone_id():
+    # First parking zone avaliable for user, the one web app shows by default
+    with step("Error while getting parking zones from web"):
+        zones = api_post("marketplace/get-parking-spot-zones", {}).json()["parkingSpotZones"]
+    if not zones:
+        raise ParkanizerError("No parking zones avaliable for user")
+    logger.info(
+        "Parking zones avaliable (set parkingSpotZoneId in config to use other than first): %s",
+        ", ".join("%s = %s" % (zone["name"], zone["id"]) for zone in zones),
+    )
+    return zones[0]["id"]
+
+
 def get_spots_status():
     # Returns ({date: reserved spot name or None}, {date: free spots count})
     with step("Error while gettitng spot status from web"):
-        response = api_post("marketplace/get-spots", {"parkingSpotZoneId": cfg.zone_id})
+        response = api_post(
+            "marketplace/get-spots", {"parkingSpotZoneId": cfg.zone_id, "bookingTimeInterval": FULL_DAY}
+        )
         spots = response.json()
 
     reserved = {}
@@ -381,9 +401,19 @@ def make_booking(date):
     with step("Error while booking spot for " + str(date)):
         response = api_post(
             "employee-reservations/take-spot-from-marketplace",
-            {"dayToTake": str(date), "parkingSpotZoneId": cfg.zone_id},
+            {
+                "dayToTake": str(date),
+                "parkingSpotZoneId": cfg.zone_id,
+                "parkingSpotIdOrNull": None,
+                "bookingTimeInterval": FULL_DAY,
+                "challengeTokenOrNull": None,
+            },
         )
-        spot = response.json()["receivedParkingSpotOrNull"]
+        result = response.json()
+        spot = result.get("receivedParkingSpotOrNull")
+    status = result.get("status")
+    if spot is None and status not in TAKE_SPOT_OK_STATUSES:
+        raise ParkanizerError("Parkanizer refused booking for " + str(date) + " with status " + repr(status))
     if spot is None:
         logger.info("Problem, no free spaces for %s", date)
         return None
@@ -401,7 +431,9 @@ def release_spot(date):
 
 
 def logout():
-    api_post("auth0/logout", {})
+    # web app logs out by opening this url, answer is redirect to login page logout
+    response = http.get(API_URL + "auth0/logout", allow_redirects=False, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -587,6 +619,8 @@ def remind_about_today(reserved):
 
 def parkanizer():
     set_auth(*login())
+    if cfg.zone_id is None:
+        cfg.zone_id = get_zone_id()
 
     # Get status of what you have currently booked
     reserved, free = get_spots_status()

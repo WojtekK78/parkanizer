@@ -43,8 +43,9 @@ BookForWeekDay = 1,2,3,4
 pauseTime = 5
 #Maximum time in seconds to search for Whitelisted spot. When reached any avaliable spot is taken. 0 = no limit, default 3600 (1 hour)
 maxSearchTime = 3600
-#Parking zone to book in (take it from Parkanizer web app requests if you need other zone). Default is used when not set
-#parkingSpotZoneId = fa44ef73-af90-48fb-b2f7-da513a25239e
+#Parking zone to book in. When not set first zone avaliable to you is used (the one web app shows first).
+#Zones avaliable with their ids are listed in log (logLevel = INFO) on every run
+#parkingSpotZoneId = d74b0000-bd9a-6045-8c41-08de654c568e
 #Search for Whitelisted spot / release non Whitelisted one only while more than this number of spots is free. Default 2
 minFreeSpots = 2
 

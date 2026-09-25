@@ -257,17 +257,38 @@ def test_max_search_time_default(app):
     assert parkanizer.cfg.max_search_time == 3600
 
 
-def test_zone_id_default_and_json_payload(app):
+FULL_DAY = {"fromBookingTime": "P0DT00H00M", "toBookingTime": "P1DT00H00M"}
+
+
+def test_zone_id_default_is_first_zone_and_json_payload(app):
     fake = app.run({MON: {"pool": ["1.007", "2", "3"]}})
-    zone = "fa44ef73-af90-48fb-b2f7-da513a25239e"
-    assert {"parkingSpotZoneId": zone} in fake.bodies
-    assert {"dayToTake": "2026-10-05", "parkingSpotZoneId": zone} in fake.bodies
+    assert fake.count("zones") == 1
+    assert {"parkingSpotZoneId": "zone-2", "bookingTimeInterval": FULL_DAY} in fake.bodies
+    assert {
+        "dayToTake": "2026-10-05",
+        "parkingSpotZoneId": "zone-2",
+        "parkingSpotIdOrNull": None,
+        "bookingTimeInterval": FULL_DAY,
+        "challengeTokenOrNull": None,
+    } in fake.bodies
 
 
 def test_zone_id_from_config(app):
     app.configure(extra_booking="parkingSpotZoneId = my-zone")
     fake = app.run({MON: {"pool": ["1.007", "2", "3"]}})
-    assert {"parkingSpotZoneId": "my-zone"} in fake.bodies
+    assert fake.count("zones") == 0
+    assert {"parkingSpotZoneId": "my-zone", "bookingTimeInterval": FULL_DAY} in fake.bodies
+
+
+def test_booking_refused_status_ends_run_with_error(app):
+    # i.e. Tidaro turned on reCAPTCHA for booking - must not be reported as "no free spots"
+    fake = FakeParkanizer({MON: {"pool": ["1.007", "2", "3"]}})
+    fake.take_status = "ChallengeTokenMissing"
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        fake.register(rsps)
+        with pytest.raises(parkanizer.ParkanizerError, match="ChallengeTokenMissing"):
+            parkanizer.parkanizer()
+    assert app.notifications == []
 
 
 def test_release_payload(app):
