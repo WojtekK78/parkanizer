@@ -2,6 +2,14 @@
 
 Each entry is one squashed commit on main, so every version can be checked out or reverted on its own (see README "Versions and going back to previous version").
 
+## 5. Lighter and more reliable login
+- pyOpenSSL<24.3 pinned: newer versions removed API used by selenium-wire for HTTPS interception, so login token capture failed on fresh installs.
+- selenium-wire captures only Parkanizer API requests (driver.scopes) and keeps them in memory, other traffic passes through untouched.
+- Authorization is taken as soon as the web app makes an authorized get-employee-context request (waits up to 30s) instead of scanning all requests afterwards; failed with unclear NameError before when the request was missing.
+- Images are not loaded and pages load "eager" - faster login.
+- New optional config option [other] chromeArguments - extra Chrome arguments separated by comma, i.e. --no-sandbox when running as root/in Docker.
+- Integration tests with real Chrome against local page (skipped when Chrome is not available).
+
 ## 4. Lighter HTTP calls and configurable zone
 - One requests.Session for all API calls (connection kept open between polls, auth set once).
 - Request bodies built as JSON by requests instead of string concatenation.

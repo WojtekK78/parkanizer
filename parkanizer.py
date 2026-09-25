@@ -1,11 +1,11 @@
 from seleniumwire import webdriver  # Import from seleniumwire
-from seleniumwire.utils import decode
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
 from datetime import datetime, timedelta
 from parkanizer_notifiers import pushover_notify
 from parkanizer_notifiers import gmail_notify
+import re
 import requests
 import configparser
 import sys
@@ -31,11 +31,29 @@ def get_cookies():
     return cookies
 
 
+# Only Parkanizer API requests are captured by selenium-wire, everything else (login page, scripts, fonts) passes through untouched
+CAPTURE_SCOPES = [r"https://share\.parkanizer\.com/api/.*"]
+# Request made by web app after login, it carries Authorization header we need
+EMPLOYEE_CONTEXT_REQUEST = r"/api/get-employee-context"
+
+
 def get_req_header():
     try:
-        for request in driver.requests:
-            if request.url == "https://share.parkanizer.com/api/get-employee-context":
-                Authorization = request.headers["Authorization"]
+        # wait for web app to make the request, then take Authorization from the latest one
+        deadline = time.monotonic() + 30
+        while True:
+            authorized = [
+                request
+                for request in driver.requests
+                if re.search(EMPLOYEE_CONTEXT_REQUEST, request.url)
+                and request.headers.get("Authorization")
+            ]
+            if authorized:
+                Authorization = authorized[-1].headers["Authorization"]
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError("No authorized " + EMPLOYEE_CONTEXT_REQUEST + " request seen")
+            time.sleep(0.2)
 
         header = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:93.0) Gecko/20100101 Firefox/93.0",
@@ -243,12 +261,21 @@ def start_driver():
     global driver
     try:
         options = webdriver.ChromeOptions()
+        # don't wait for images/subresources, login waits for elements explicitly
+        options.page_load_strategy = "eager"
         options.add_argument("--headless=new")
+        options.add_argument("--blink-settings=imagesEnabled=false")
         options.add_argument("--disable-proxy-certificate-handler")
         options.add_argument("--disable-content-security-policy")
         options.add_argument("--ignore-certificate-errors")
         options.add_argument('--allow-running-insecure-content')
-        driver = webdriver.Chrome(options=options)
+        for argument in chromeArguments:
+            options.add_argument(argument)
+        driver = webdriver.Chrome(
+            options=options,
+            seleniumwire_options={"request_storage": "memory", "request_storage_max_size": 100},
+        )
+        driver.scopes = CAPTURE_SCOPES
     except Exception as error:
         logger.error("Error while initializing Chrome webdriver")
         logger.error(error)
@@ -277,7 +304,6 @@ def login():
     try:
         driver.delete_all_cookies()
         del driver.requests
-        all_requests = driver.requests
 
         # logging in
         logger.info("Initating login to parkanizer")
@@ -566,7 +592,7 @@ def read_config():
     try:
         config = configparser.ConfigParser()
         config.read(str(sys.argv[1]))
-        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, maxSearchTime, parkingSpotZoneId, minFreeSpots, shutdownOnSuccess, logLevel
+        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, maxSearchTime, parkingSpotZoneId, minFreeSpots, chromeArguments, shutdownOnSuccess, logLevel
         parkanizer_user = config["login"]["parkanizer_user"]
         parkanizer_user_id = parkanizer_user.partition("@")[0].replace(".", "")
         parkanizer_pass = config["login"]["parkanizer_pass"]
@@ -605,6 +631,12 @@ def read_config():
         )
         minFreeSpots = config["booking"].getint("minFreeSpots", fallback=2)
         logLevel = config["other"]["logLevel"]
+        # extra Chrome command line arguments, i.e. --no-sandbox when running as root/in Docker
+        chromeArguments = [
+            argument.strip()
+            for argument in config["other"].get("chromeArguments", fallback="").split(",")
+            if argument.strip()
+        ]
         shutdownOnSuccess = config["other"].getboolean(
             "shutdownOnSuccess"
         )
