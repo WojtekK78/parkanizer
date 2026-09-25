@@ -167,3 +167,43 @@ def test_main_with_non_ini_file_exits_with_error():
     result = run_main("config.txt")
     assert result.returncode == 1
     assert "Please provide" in result.stdout
+
+
+def test_all_dates_searched_in_one_loop(app):
+    # Monday's non whitelisted spot is taken by somebody only after a long time,
+    # Tuesday's quickly. Tuesday must not wait for Monday.
+    def hook(fake):
+        if fake.polls_since_resign == 2:
+            fake.someone_takes(TUE)
+        if fake.polls_since_resign == 10:
+            fake.someone_takes(MON)
+
+    fake = app.run(
+        {
+            MON: {"pool": ["2", "1.007", "3", "4"]},
+            TUE: {"pool": ["5", "9.999", "6", "7"]},
+        },
+        on_poll=hook,
+    )
+    assert fake.days[MON]["reserved"] == "1.007"
+    assert fake.days[TUE]["reserved"] == "9.999"
+    booked = [title for channel, title in app.notifications if channel == "gmail"]
+    assert booked == ["Parkanizer Tue 10-06 spot = 9.999", "Parkanizer Mon 10-05 spot = 1.007"]
+    # one status request per waiting loop for both dates (no separate polling per date)
+    assert fake.polls < 16
+
+
+def test_each_date_reported_once(app):
+    fake = app.run(
+        {
+            MON: {"pool": ["1.007", "2", "3"]},
+            TUE: {"pool": []},
+            WED: {"pool": ["2", "3", "4"]},
+        }
+    )
+    titles = sorted(t for c, t in app.notifications if c == "gmail")
+    assert titles == [
+        "Parkanizer Mon 10-05 spot = 1.007",
+        "Parkanizer Problem Tue 10-06 no spots booked",
+        "Parkanizer Wed 10-07 spot = 2",
+    ]

@@ -29,6 +29,8 @@ For every date returned by Parkanizer that is on one of your BookForWeekDay days
 - you hold a non Whitelisted spot and more than 2 spots are free -> spot is released and search for Whitelisted spot starts
 - you hold nothing -> spot is booked and, if it's not Whitelisted, search for Whitelisted spot starts (while more than 2 spots are free)
 
+Search for Whitelisted spot: after releasing non Whitelisted spot script waits until free spots count for that date changes (somebody took the spot that is offered now), then books again. All dates are watched together in one loop, status is refreshed every pauseTime seconds.
+
 Notifications: gmail_notify_enabled and pushover_notify_enabled are master switches. If a channel is disabled nothing is sent through it, whatever notify_* options say.
 
 ## Running tests
