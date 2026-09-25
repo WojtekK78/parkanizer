@@ -61,12 +61,12 @@ def browser(app, monkeypatch):
     arguments = ["--proxy-bypass-list=<-loopback>"]
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         arguments.append("--no-sandbox")
-    monkeypatch.setattr(parkanizer, "chromeArguments", arguments)
+    monkeypatch.setattr(parkanizer.cfg, "chrome_arguments", arguments)
     # conftest replaces start_driver with a mock, use the real one here
     monkeypatch.setattr(parkanizer, "start_driver", START_DRIVER)
     try:
         parkanizer.start_driver()
-    except SystemExit:
+    except parkanizer.ParkanizerError:
         pytest.skip("Chrome/chromedriver not available")
     yield parkanizer.driver
     parkanizer.quit_driver()

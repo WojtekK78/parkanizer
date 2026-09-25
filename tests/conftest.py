@@ -82,10 +82,10 @@ class App:
         (tmp_path / "shelve").mkdir()
 
     def configure(self, **kwargs):
-        cfg = write_config(self.tmp_path / "config.ini", **kwargs)
-        self.monkeypatch.setattr(sys, "argv", ["parkanizer.py", str(cfg)])
-        parkanizer.read_config()
+        self.config_file = write_config(self.tmp_path / "config.ini", **kwargs)
+        self.monkeypatch.setattr(parkanizer, "cfg", parkanizer.read_config(str(self.config_file)))
         logging.getLogger(parkanizer.__name__).handlers.clear()
+        self.monkeypatch.setattr(parkanizer, "logger", parkanizer.logger)
         parkanizer.initialize_logger()
         self.monkeypatch.setattr(parkanizer, "driver", mock.MagicMock(), raising=False)
         def fake_login():

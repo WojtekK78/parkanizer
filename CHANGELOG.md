@@ -2,6 +2,14 @@
 
 Each entry is one squashed commit on main, so every version can be checked out or reverted on its own (see README "Versions and going back to previous version").
 
+## 6. Code structure cleanup
+- Configuration kept in one Config object instead of ~20 global variables (config file format unchanged).
+- Helper functions raise ParkanizerError describing the failed step instead of calling sys.exit; main() handles errors in one place and returns exit code. One error log line/email per failure (was two).
+- Login timeout error says at which page/URL login got stuck.
+- Reservation storage opened once per run (was opened for every date and every booking).
+- Log messages use logging's %s formatting.
+- initialize_logger can be called again without duplicating log lines.
+
 ## 5. Lighter and more reliable login
 - pyOpenSSL<24.3 pinned: newer versions removed API used by selenium-wire for HTTPS interception, so login token capture failed on fresh installs.
 - selenium-wire captures only Parkanizer API requests (driver.scopes) and keeps them in memory, other traffic passes through untouched.
