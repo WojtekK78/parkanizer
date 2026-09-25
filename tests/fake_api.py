@@ -8,6 +8,7 @@ import json
 import re
 from datetime import datetime
 
+import requests
 import responses
 
 BASE = "https://share.parkanizer.com/api"
@@ -25,8 +26,9 @@ class FakeParkanizer:
         self.polls_since_resign = None
         # hook(fake) called on every get-spots, lets tests simulate other employees
         self.on_poll = None
-        # list of status codes returned (and consumed) before normal handling
+        # list of status codes (or "conn" for network error) returned, one per request, before normal handling
         self.failures = []
+        self.timeouts = []
 
     # -- simulated other employees -------------------------------------------------
     def someone_takes(self, date):
@@ -38,14 +40,18 @@ class FakeParkanizer:
         self.days[date]["pool"].append(spot)
 
     # -- handlers --------------------------------------------------------------------
-    def _fail(self):
+    def _fail(self, request=None):
+        if request is not None:
+            self.timeouts.append(request.req_kwargs.get("timeout"))
         if self.failures:
             code = self.failures.pop(0)
+            if code == "conn":
+                raise requests.ConnectionError("simulated network error")
             return (code, {}, json.dumps({"error": code}))
 
     def _get_spots(self, request):
         self.calls.append(("get-spots", None))
-        failed = self._fail()
+        failed = self._fail(request)
         if failed:
             return failed
         self.polls += 1
@@ -73,7 +79,7 @@ class FakeParkanizer:
         body = json.loads(request.body)
         date = datetime.fromisoformat(body["dayToTake"]).date()
         self.calls.append(("take", date))
-        failed = self._fail()
+        failed = self._fail(request)
         if failed:
             return failed
         day = self.days[date]
@@ -94,7 +100,7 @@ class FakeParkanizer:
         body = json.loads(request.body)
         date = datetime.fromisoformat(body["daysToShare"][0]).date()
         self.calls.append(("resign", date))
-        failed = self._fail()
+        failed = self._fail(request)
         if failed:
             return failed
         day = self.days[date]

@@ -207,3 +207,51 @@ def test_each_date_reported_once(app):
         "Parkanizer Problem Tue 10-06 no spots booked",
         "Parkanizer Wed 10-07 spot = 2",
     ]
+
+
+def test_requests_have_timeout(app):
+    fake = app.run({MON: {"pool": ["1.007", "2", "3"]}})
+    assert fake.timeouts and all(t == parkanizer.REQUEST_TIMEOUT for t in fake.timeouts)
+
+
+def test_server_errors_and_network_errors_are_retried(app):
+    fake = app.run({MON: {"pool": ["1.007", "2", "3"]}}, failures=[503, "conn", 502])
+    assert fake.days[MON]["reserved"] == "1.007"
+
+
+def test_persistent_errors_stop_the_run(app):
+    import pytest
+
+    with pytest.raises(SystemExit) as exc:
+        app.run({MON: {"pool": ["1.007", "2", "3"]}}, failures=["conn"] * 10)
+    assert exc.value.code == 1
+
+
+def test_client_error_is_not_retried(app):
+    import pytest
+
+    with pytest.raises(SystemExit):
+        app.run({MON: {"pool": ["1.007", "2", "3"]}}, failures=[400, 400])
+    # second failure not consumed -> the request was not repeated
+    assert app.fake.failures == [400]
+
+
+def test_expired_authorization_logs_in_again(app):
+    fake = app.run({MON: {"pool": ["1.007", "2", "3"]}}, failures=[401])
+    assert app.logins == 2
+    assert fake.days[MON]["reserved"] == "1.007"
+
+
+def test_search_time_limit_takes_offered_spot(app):
+    app.configure(extra_booking="maxSearchTime = 1")
+    clock = {"t": 0}
+    app.monkeypatch.setattr(parkanizer.time, "monotonic", lambda: clock["t"])
+    app.monkeypatch.setattr(parkanizer.time, "sleep", lambda s: clock.update(t=clock["t"] + 1))
+    # nobody ever takes offered "2", so the free count never changes
+    fake = app.run({MON: {"pool": ["2", "1.007", "3", "4"]}})
+    assert fake.days[MON]["reserved"] == "2"
+    assert ("gmail", "Parkanizer Mon 10-05 spot = 2") in app.notifications
+
+
+def test_max_search_time_default(app):
+    assert parkanizer.maxSearchTime == 3600
