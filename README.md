@@ -8,8 +8,9 @@ PLEASE REMEBER ABOUT RELEASING UNSUED PARKING SPOTS - Remember that after you ha
 
 There is lots of speling mistakes, let them be :)
 
-- install dependencies sudo python -m pip install -r requirements.txt (note: selenium-wire needs blinker<1.8, it's pinned in requirements.txt)
-- install chromium web driver and make sure it's accesible in PATH source -> <https://chromedriver.chromium.org/downloads>
+- install dependencies sudo python -m pip install -r requirements.txt (note: selenium-wire needs blinker<1.8 and pyOpenSSL<24.3, both are pinned in requirements.txt - reinstall requirements when updating)
+- install Chrome/Chromium. Selenium 4.6+ downloads matching chromedriver automatically; if that's not possible install chromedriver matching your Chrome version and make sure it's accesible in PATH source -> <https://googlechromelabs.github.io/chrome-for-testing/>
+- running as root or in Docker: set chromeArguments = --no-sandbox in [other] section of config
 - Setup confg in any .ini file i.e. "config.ini" based on provided template "config.ini.template" file
 - Run as: "python parkanizer.py config.ini"
 - if running headless on linux you can use following guides to setup Chromium wbedriver & to allow for it to work in Crontab (Display:0)
@@ -38,7 +39,7 @@ Notifications: gmail_notify_enabled and pushover_notify_enabled are master switc
 
 ## Running tests
 
-Tests use a fake Parkanizer API, no credentials or browser are needed.
+Tests use a fake Parkanizer API, no credentials are needed. Browser tests (tests/test_browser.py) start real Chrome against a local page and are skipped when Chrome can't be started.
 
     python -m pip install -r requirements.txt -r requirements-dev.txt
     python -m pytest
