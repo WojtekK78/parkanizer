@@ -8,7 +8,7 @@ PLEASE REMEBER ABOUT RELEASING UNSUED PARKING SPOTS - Remember that after you ha
 
 There is lots of speling mistakes, let them be :)
 
-- install dependencies sudo python -m pip install -r requirements.txt (note: selenium-wire needs blinker<1.8 and pyOpenSSL<24.3, both are pinned in requirements.txt - reinstall requirements when updating)
+- install dependencies sudo python -m pip install -r requirements.txt (reinstall requirements when updating, selenium-wire/blinker/pyOpenSSL are no longer needed)
 - install Chrome/Chromium. Selenium 4.6+ downloads matching chromedriver automatically; if that's not possible install chromedriver matching your Chrome version and make sure it's accesible in PATH source -> <https://googlechromelabs.github.io/chrome-for-testing/>
 - running as root or in Docker: set chromeArguments = --no-sandbox in [other] section of config
 - Setup confg in any .ini file i.e. "config.ini" based on provided template "config.ini.template" file

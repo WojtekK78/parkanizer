@@ -2,6 +2,11 @@
 
 Each entry is one squashed commit on main, so every version can be checked out or reverted on its own (see README "Versions and going back to previous version").
 
+## 7. Login works again with current Tidaro web app
+- Web app now loads ~11MB of scripts before redirecting to login page. Through selenium-wire's proxy they took ~25s and the app gave up (requirejs "Load timeout for modules: main"), so login never started.
+- selenium-wire removed: Authorization header is read from Chrome's own network log (performance log), Chrome connects directly. blinker/pyOpenSSL pins and their install problems are gone with it.
+- Login waits up to 30s per step (was 10s), the login page alone takes ~10s to appear on a slower connection.
+
 ## 6. Code structure cleanup
 - Configuration kept in one Config object instead of ~20 global variables (config file format unchanged).
 - Helper functions raise ParkanizerError describing the failed step instead of calling sys.exit; main() handles errors in one place and returns exit code. One error log line/email per failure (was two).

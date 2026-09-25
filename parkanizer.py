@@ -1,10 +1,10 @@
 """Parkanizer/Tidaro parking spot auto reservation.
 
-Logs in with headless Chrome (selenium-wire captures the Authorization header the web app uses),
+Logs in with headless Chrome (Authorization header the web app uses is read from Chrome's network log),
 then talks to Parkanizer API directly: books spots for configured week days, searches for
 Whitelisted spots and sends notifications. Run as: python parkanizer.py config.ini
 """
-from seleniumwire import webdriver  # Import from seleniumwire
+from selenium import webdriver
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from parkanizer_notifiers import pushover_notify
 from parkanizer_notifiers import gmail_notify
+import json
 import re
 import requests
 import configparser
@@ -25,8 +26,6 @@ import os
 from notifiers.logging import NotificationHandler
 
 API_URL = "https://share.parkanizer.com/api/"
-# Only Parkanizer API requests are captured by selenium-wire, everything else (login page, scripts, fonts) passes through untouched
-CAPTURE_SCOPES = [r"https://share\.parkanizer\.com/api/.*"]
 # Request made by web app after login, it carries Authorization header we need
 EMPLOYEE_CONTEXT_REQUEST = r"/api/get-employee-context"
 DEFAULT_ZONE_ID = "fa44ef73-af90-48fb-b2f7-da513a25239e"
@@ -192,17 +191,13 @@ def start_driver():
         options.page_load_strategy = "eager"
         options.add_argument("--headless=new")
         options.add_argument("--blink-settings=imagesEnabled=false")
-        options.add_argument("--disable-proxy-certificate-handler")
-        options.add_argument("--disable-content-security-policy")
-        options.add_argument("--ignore-certificate-errors")
-        options.add_argument("--allow-running-insecure-content")
+        # Chrome logs requests it sends (with headers), get_req_header() reads Authorization from there.
+        # No proxy in between, so the web app's big scripts load at full speed.
+        options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+        options.add_experimental_option("perfLoggingPrefs", {"enableNetwork": True, "enablePage": False})
         for argument in cfg.chrome_arguments:
             options.add_argument(argument)
-        driver = webdriver.Chrome(
-            options=options,
-            seleniumwire_options={"request_storage": "memory", "request_storage_max_size": 100},
-        )
-        driver.scopes = CAPTURE_SCOPES
+        driver = webdriver.Chrome(options=options)
 
 
 def quit_driver():
@@ -220,19 +215,30 @@ def get_cookies():
         return {cookie["name"]: cookie["value"] for cookie in driver.get_cookies()}
 
 
+def read_authorization(log_entries):
+    # Authorization header of the latest authorized get-employee-context request in Chrome performance log, or None
+    authorization = None
+    for entry in log_entries:
+        message = json.loads(entry["message"])["message"]
+        if message["method"] != "Network.requestWillBeSent":
+            continue
+        request = message["params"]["request"]
+        if not re.search(EMPLOYEE_CONTEXT_REQUEST, request["url"]):
+            continue
+        for name, value in request.get("headers", {}).items():
+            if name.lower() == "authorization" and value:
+                authorization = value
+    return authorization
+
+
 def get_req_header():
     with step("Error while gettitng headers for Authorization from Selenium"):
-        # wait for web app to make the request, then take Authorization from the latest one
+        # wait for web app to make the request, then take Authorization from the latest one.
+        # Chrome hands out every log entry once, so already read entries are not seen again
         deadline = time.monotonic() + 30
         while True:
-            authorized = [
-                request
-                for request in driver.requests
-                if re.search(EMPLOYEE_CONTEXT_REQUEST, request.url)
-                and request.headers.get("Authorization")
-            ]
-            if authorized:
-                authorization = authorized[-1].headers["Authorization"]
+            authorization = read_authorization(driver.get_log("performance"))
+            if authorization:
                 break
             if time.monotonic() > deadline:
                 raise TimeoutError("No authorized " + EMPLOYEE_CONTEXT_REQUEST + " request seen")
@@ -260,11 +266,13 @@ def login():
     # Login into page and get proper authntication cookies and headers for later usage
     with step("Error while initializing selenium and logging into parkanizer"):
         driver.delete_all_cookies()
-        del driver.requests
+        # drop requests logged so far, only ones made after this login count
+        driver.get_log("performance")
 
         logger.info("Initating login to parkanizer")
         driver.get("https://share.parkanizer.com")
-        wait = WebDriverWait(driver, 10)
+        # web app loads ~10MB of scripts before redirecting to login page, give slow connections time
+        wait = WebDriverWait(driver, 30)
         try:
             wait.until(EC.title_is("User details"))
             wait.until(EC.url_contains("https://login.parkanizer.com"))
