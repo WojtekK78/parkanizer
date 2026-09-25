@@ -41,6 +41,8 @@ Whitelist = 1.007,9.999,0.666
 BookForWeekDay = 1,2,3,4
 #Time to wait in seconds between refreshing status of avaliable spots. Should not be too agressive.
 pauseTime = 5
+#Maximum time in seconds to search for Whitelisted spot. When reached any avaliable spot is taken. 0 = no limit, default 3600 (1 hour)
+maxSearchTime = 3600
 
 
 [other]

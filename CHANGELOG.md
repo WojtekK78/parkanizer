@@ -2,6 +2,13 @@
 
 Each entry is one squashed commit on main, so every version can be checked out or reverted on its own (see README "Versions and going back to previous version").
 
+## 3. Robustness
+- All API requests have 30s timeout. Network errors and 5xx responses are retried 3 times (2s, 4s, 8s pauses) instead of stopping the run.
+- When authorization expires (401, i.e. during long search) script logs in again in fresh browser and repeats the request.
+- New optional config option [booking] maxSearchTime (seconds, default 3600, 0 = no limit). When reached, script takes any spot offered for dates still searching, so you don't end up without a spot after releasing one.
+- Chrome is always closed, also when run ends with error (it was left running before).
+- Failed logout no longer marks the run as failed.
+
 ## 2. All dates searched in one loop
 - Previously dates were handled one after another and waiting for a better spot on one date (possibly hours) blocked booking of all later dates.
 - Now all dates are booked first, then one loop watches all dates still searching, with one status request per pauseTime, and retries only dates whose free spots count changed.

@@ -31,6 +31,9 @@ For every date returned by Parkanizer that is on one of your BookForWeekDay days
 
 Search for Whitelisted spot: after releasing non Whitelisted spot script waits until free spots count for that date changes (somebody took the spot that is offered now), then books again. All dates are watched together in one loop, status is refreshed every pauseTime seconds.
 
+Search stops after maxSearchTime seconds (config, default 1 hour, 0 = no limit), then any spot offered is taken so you don't end up without a spot.
+Network errors are retried and expired login is renewed automatically, so long searches survive both.
+
 Notifications: gmail_notify_enabled and pushover_notify_enabled are master switches. If a channel is disabled nothing is sent through it, whatever notify_* options say.
 
 ## Running tests

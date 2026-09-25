@@ -62,7 +62,69 @@ def get_req_header():
     return header
 
 
-def get_spots_status(headers, cookies):
+# Seconds to wait for Parkanizer to answer a single request
+REQUEST_TIMEOUT = 30
+# Number of tries for a request failing with network error or 5xx, waits RETRY_BACKOFF, 2x, 4x... seconds between tries
+REQUEST_TRIES = 4
+RETRY_BACKOFF = 2
+
+driver = None
+
+# Authorization headers and cookies taken from browser after login, refreshed by relogin()
+auth = {"headers": None, "cookies": None}
+
+
+class SessionExpired(Exception):
+    pass
+
+
+def api_post(url, data):
+    # POST to Parkanizer API with timeout, retries on network errors/5xx and new login when authorization expired
+    relogged = False
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            response = requests.post(
+                url,
+                headers=auth["headers"],
+                cookies=auth["cookies"],
+                data=data,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code == 401:
+                raise SessionExpired()
+            if response.status_code >= 500:
+                raise requests.HTTPError(
+                    str(response.status_code) + " server error", response=response
+                )
+            response.raise_for_status()
+            return response
+        except SessionExpired:
+            if relogged:
+                raise requests.HTTPError("401 Unauthorized even after new login")
+            logger.info("Authorization expired, logging in again")
+            relogin()
+            relogged = True
+        except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as error:
+            is_server_error = (
+                isinstance(error, requests.HTTPError)
+                and error.response is not None
+                and error.response.status_code >= 500
+            )
+            if isinstance(error, requests.HTTPError) and not is_server_error:
+                raise
+            if attempt >= REQUEST_TRIES:
+                raise
+            wait = RETRY_BACKOFF * 2 ** (attempt - 1)
+            logger.info(
+                "Request to " + url + " failed (" + str(error) + "), retry " + str(attempt)
+                + " of " + str(REQUEST_TRIES - 1) + " in " + str(wait) + "s"
+            )
+            time.sleep(wait)
+
+
+def get_spots_status():
     dict_spots_avaliable = {}
     dict_spots_avaliable.clear()
     dict_spots_free = {}
@@ -73,12 +135,7 @@ def get_spots_status(headers, cookies):
     data = '{"parkingSpotZoneId":"fa44ef73-af90-48fb-b2f7-da513a25239e"}'
 
     try:
-        response = requests.post(
-            "https://share.parkanizer.com/api/marketplace/get-spots",
-            headers=headers,
-            cookies=cookies,
-            data=data,
-        )
+        response = api_post("https://share.parkanizer.com/api/marketplace/get-spots", data)
         spots_avaliable = response.json()
     except Exception as error:
         logger.error("Error while gettitng spot status from web")
@@ -115,7 +172,7 @@ def get_spots_status(headers, cookies):
     return dict_spots_avaliable, dict_spots_free
 
 
-def make_booking(headers, cookies, daytotake):
+def make_booking(daytotake):
     spot = ""
     #    cookies = get_cookies()
     data = (
@@ -124,12 +181,7 @@ def make_booking(headers, cookies, daytotake):
         + '", "parkingSpotZoneId":"fa44ef73-af90-48fb-b2f7-da513a25239e"}'
     )
     try:
-        response = requests.post(
-            "https://share.parkanizer.com/api/employee-reservations/take-spot-from-marketplace",
-            headers=headers,
-            cookies=cookies,
-            data=data,
-        )
+        response = api_post("https://share.parkanizer.com/api/employee-reservations/take-spot-from-marketplace", data)
         spot = response.json()
     except Exception as error:
         logger.error("Error while gettitng reponse on making booking")
@@ -153,16 +205,11 @@ def make_booking(headers, cookies, daytotake):
     return spot
 
 
-def release_spot(headers, cookies, daystoshare):
+def release_spot(daystoshare):
     #    cookies = get_cookies()
     data = '{"daysToShare":["' + daystoshare + '"],"receivingEmployeeIdOrNull":null}'
     try:
-        response = requests.post(
-            "https://share.parkanizer.com/api/employee-reservations/resign",
-            headers=headers,
-            cookies=cookies,
-            data=data,
-        )
+        response = api_post("https://share.parkanizer.com/api/employee-reservations/resign", data)
     except Exception as error:
         logger.error("Error while relesing inconvinient spot")
         logger.error(error)
@@ -171,15 +218,10 @@ def release_spot(headers, cookies, daystoshare):
     logger.debug(("Spot from date ", daystoshare, " released"))
     return response.status_code
 
-def logout(headers, cookies):
+def logout():
     #    cookies = get_cookies()
     data = "{}"
-    response = requests.post(
-        "https://share.parkanizer.com/api/auth0/logout",
-        headers=headers,
-        cookies=cookies,
-        data=data,
-    )
+    response = api_post("https://share.parkanizer.com/api/auth0/logout", data)
     return response.status_code
 
 
@@ -201,6 +243,39 @@ def send_notifications(message, title, gmail=True, pushover=True):
             username=gmail_user,
             to=gmail_to,
         )
+
+
+def start_driver():
+    global driver
+    try:
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-proxy-certificate-handler")
+        options.add_argument("--disable-content-security-policy")
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument('--allow-running-insecure-content')
+        driver = webdriver.Chrome(options=options)
+    except Exception as error:
+        logger.error("Error while initializing Chrome webdriver")
+        logger.error(error)
+        sys.exit(1)
+
+
+def quit_driver():
+    global driver
+    if driver is not None:
+        try:
+            driver.quit()
+        except Exception as error:
+            logger.debug("Error while closing Chrome: " + str(error))
+        driver = None
+
+
+def relogin():
+    # Fresh browser, as the old one may still hold login session and skip login page
+    quit_driver()
+    start_driver()
+    auth["headers"], auth["cookies"] = login()
 
 
 def login():
@@ -319,7 +394,7 @@ def report_booking(date, spot):
     logger.info("Notifications send")
 
 
-def search_spots(dates, headers, cookies):
+def search_spots(dates):
     # Books spot for every date. If booked spot is not in our Whitelist release it and repeat booking untill we will get "Whitelisted".
     # If spot == None booking was unsuccesful as there was no free spaces so we need to abort.
     # 20240226 After change of Tidaro API they no longer loop through avaliable spot. Instead they alway provide one spot number until
@@ -335,9 +410,9 @@ def search_spots(dates, headers, cookies):
         spots = {}
         for date in dates_to_book:
             iterations[date] += 1
-            spots[date] = make_booking(headers=headers, cookies=cookies, daytotake=str(date))
+            spots[date] = make_booking(daytotake=str(date))
         # Refresh number of free spots. If there is 2 or less we need to take it and stop searching
-        not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
+        not_used, free_status = get_spots_status()
         released = []
         for date, spot in spots.items():
             if spot == None or spot in Whitelist or free_status[date] <= 2:
@@ -350,21 +425,31 @@ def search_spots(dates, headers, cookies):
                 + " Free spaces: " + str(free_status[date])
                 + " Got non Whitelisted spot: " + spot
             )
-            release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
+            release_spot(daystoshare=str(date))
             released.append(date)
         if released:
             # Wait to get different count of Free spot before moving to next booking try
             logger.info("Initiated wait for change in free spots avalaiable before next booking try")
-            not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
+            not_used, free_status = get_spots_status()
             for date in released:
                 waiting[date] = free_status[date]
 
     book(dates)
     loop = 0
     while waiting:
+        if maxSearchTime and time.monotonic() - start >= maxSearchTime:
+            # Don't end up without any spot - take whatever is offered now
+            logger.info(
+                "Search time limit (maxSearchTime=" + str(maxSearchTime) + "s) reached, taking any avaliable spot for: "
+                + ", ".join(str(d) for d in waiting)
+            )
+            for date in list(waiting):
+                del waiting[date]
+                report_booking(date, make_booking(daytotake=str(date)))
+            break
         loop += 1
         time.sleep(pauseTime)
-        not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
+        not_used, free_status = get_spots_status()
         changed = [date for date in waiting if free_status[date] != waiting[date]]
         logger.debug(
             "Waiting for change in avaliable spots. Loop: " + str(loop)
@@ -378,10 +463,10 @@ def search_spots(dates, headers, cookies):
 
 
 def parkanizer():
-    headers, cookies = login()
+    auth["headers"], auth["cookies"] = login()
 
     # Get status of what you have currently booked
-    spots_status, free_status = get_spots_status(headers=headers, cookies=cookies)
+    spots_status, free_status = get_spots_status()
     logger.info(("Spots status: " + str(spots_status)))
     logger.info(("Free space status: " + str(free_status)))
 
@@ -423,19 +508,21 @@ def parkanizer():
         # If reserved spot is not Whitelisted and there is more than 2 free spots open,
         # release reservation and search for new Whitelisted spot
         if reserved_spot != "None":
-            release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
+            release_spot(daystoshare=str(date))
             logger.info("Released non whitelisted spot: " + reserved_spot + " from: " + date.strftime("%A %B %d"))
         to_book.append(date)
 
     # Book all dates at once, then keep searching for Whitelisted spots for all of them in one loop
     if to_book:
         logger.info("Start booking process for: " + ", ".join(str(d) for d in to_book))
-        search_spots(to_book, headers=headers, cookies=cookies)
+        search_spots(to_book)
 
     logger.info("Done")
-    logout(headers=headers, cookies=cookies)
-    driver.quit()
-    logger.info("Logged out")
+    try:
+        logout()
+        logger.info("Logged out")
+    except Exception as error:
+        logger.warning("Logout failed: " + str(error))
 
 
 def initialize_logger():
@@ -485,7 +572,7 @@ def read_config():
     try:
         config = configparser.ConfigParser()
         config.read(str(sys.argv[1]))
-        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, shutdownOnSuccess, logLevel
+        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, maxSearchTime, shutdownOnSuccess, logLevel
         parkanizer_user = config["login"]["parkanizer_user"]
         parkanizer_user_id = parkanizer_user.partition("@")[0].replace(".", "")
         parkanizer_pass = config["login"]["parkanizer_pass"]
@@ -517,6 +604,8 @@ def read_config():
             for numeric_string in config["booking"]["BookForWeekDay"].split(",")
         ]
         pauseTime = int(config["booking"]["pauseTime"])
+        # 0 = search without time limit
+        maxSearchTime = config["booking"].getint("maxSearchTime", fallback=3600)
         logLevel = config["other"]["logLevel"]
         shutdownOnSuccess = config["other"].getboolean(
             "shutdownOnSuccess"
@@ -539,22 +628,19 @@ if __name__ == "__main__":
     read_config()
     initialize_logger()
     logger.info("Initialization")
-    
-    try:
-        options = webdriver.ChromeOptions()
-        options.add_argument("--headless=new")
-        options.add_argument("--disable-proxy-certificate-handler")
-        options.add_argument("--disable-content-security-policy")
-        options.add_argument("--ignore-certificate-errors")
-        options.add_argument('--allow-running-insecure-content')
-        driver = webdriver.Chrome(options=options)
-    except Exception as error:
-        logger.error("Error while initializing Chrome webdriver")
-        logger.error(error)
-        sys.exit(1)
 
-    parkanizer()
-    
+    try:
+        start_driver()
+        parkanizer()
+    except SystemExit:
+        raise
+    except Exception as error:
+        logger.error("Unexpected error: " + repr(error))
+        sys.exit(1)
+    finally:
+        # Always close Chrome, also when run ended with error
+        quit_driver()
+
     #Shutdown if succesful
     if shutdownOnSuccess:
         os.system('sudo shutdown +15')

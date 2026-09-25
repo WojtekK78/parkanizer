@@ -72,6 +72,7 @@ class App:
         self.tmp_path = tmp_path
         self.monkeypatch = monkeypatch
         self.notifications = []
+        self.logins = 0
         self.error_emails = []
         # logger warnings/errors are emailed via NotificationHandler, capture instead of sending
         monkeypatch.setattr(
@@ -87,9 +88,15 @@ class App:
         logging.getLogger(parkanizer.__name__).handlers.clear()
         parkanizer.initialize_logger()
         self.monkeypatch.setattr(parkanizer, "driver", mock.MagicMock(), raising=False)
+        def fake_login():
+            self.logins += 1
+            return {"Authorization": "Bearer " + str(self.logins)}, {"c": "1"}
+
+        self.monkeypatch.setattr(parkanizer, "login", fake_login)
         self.monkeypatch.setattr(
-            parkanizer, "login", lambda: ({"Authorization": "Bearer x"}, {"c": "1"})
+            parkanizer, "start_driver", lambda: setattr(parkanizer, "driver", mock.MagicMock())
         )
+        self.monkeypatch.setattr(parkanizer, "RETRY_BACKOFF", 0)
         self.monkeypatch.setattr(
             parkanizer,
             "pushover_notify",
@@ -103,7 +110,7 @@ class App:
         return self
 
     def run(self, days, on_poll=None, failures=None):
-        fake = FakeParkanizer(days)
+        fake = self.fake = FakeParkanizer(days)
         fake.on_poll = on_poll
         fake.failures = list(failures or [])
         with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
