@@ -70,28 +70,32 @@ RETRY_BACKOFF = 2
 
 driver = None
 
-# Authorization headers and cookies taken from browser after login, refreshed by relogin()
-auth = {"headers": None, "cookies": None}
+API_URL = "https://share.parkanizer.com/api/"
+
+# One HTTP session for all API calls - keeps connection open between requests.
+# Holds Authorization header and cookies taken from browser after login, refreshed by relogin()
+http = requests.Session()
+
+
+def set_auth(headers, cookies):
+    http.headers.clear()
+    http.headers.update(headers)
+    http.cookies.clear()
+    http.cookies.update(cookies)
 
 
 class SessionExpired(Exception):
     pass
 
 
-def api_post(url, data):
+def api_post(path, payload):
     # POST to Parkanizer API with timeout, retries on network errors/5xx and new login when authorization expired
     relogged = False
     attempt = 0
     while True:
         attempt += 1
         try:
-            response = requests.post(
-                url,
-                headers=auth["headers"],
-                cookies=auth["cookies"],
-                data=data,
-                timeout=REQUEST_TIMEOUT,
-            )
+            response = http.post(API_URL + path, json=payload, timeout=REQUEST_TIMEOUT)
             if response.status_code == 401:
                 raise SessionExpired()
             if response.status_code >= 500:
@@ -118,7 +122,7 @@ def api_post(url, data):
                 raise
             wait = RETRY_BACKOFF * 2 ** (attempt - 1)
             logger.info(
-                "Request to " + url + " failed (" + str(error) + "), retry " + str(attempt)
+                "Request to " + path + " failed (" + str(error) + "), retry " + str(attempt)
                 + " of " + str(REQUEST_TRIES - 1) + " in " + str(wait) + "s"
             )
             time.sleep(wait)
@@ -126,16 +130,10 @@ def api_post(url, data):
 
 def get_spots_status():
     dict_spots_avaliable = {}
-    dict_spots_avaliable.clear()
     dict_spots_free = {}
-    dict_spots_free.clear()
-
-
-    #    cookies = get_cookies()
-    data = '{"parkingSpotZoneId":"fa44ef73-af90-48fb-b2f7-da513a25239e"}'
 
     try:
-        response = api_post("https://share.parkanizer.com/api/marketplace/get-spots", data)
+        response = api_post("marketplace/get-spots", {"parkingSpotZoneId": parkingSpotZoneId})
         spots_avaliable = response.json()
     except Exception as error:
         logger.error("Error while gettitng spot status from web")
@@ -174,14 +172,11 @@ def get_spots_status():
 
 def make_booking(daytotake):
     spot = ""
-    #    cookies = get_cookies()
-    data = (
-        '{"dayToTake":"'
-        + daytotake
-        + '", "parkingSpotZoneId":"fa44ef73-af90-48fb-b2f7-da513a25239e"}'
-    )
     try:
-        response = api_post("https://share.parkanizer.com/api/employee-reservations/take-spot-from-marketplace", data)
+        response = api_post(
+            "employee-reservations/take-spot-from-marketplace",
+            {"dayToTake": daytotake, "parkingSpotZoneId": parkingSpotZoneId},
+        )
         spot = response.json()
     except Exception as error:
         logger.error("Error while gettitng reponse on making booking")
@@ -206,10 +201,11 @@ def make_booking(daytotake):
 
 
 def release_spot(daystoshare):
-    #    cookies = get_cookies()
-    data = '{"daysToShare":["' + daystoshare + '"],"receivingEmployeeIdOrNull":null}'
     try:
-        response = api_post("https://share.parkanizer.com/api/employee-reservations/resign", data)
+        response = api_post(
+            "employee-reservations/resign",
+            {"daysToShare": [daystoshare], "receivingEmployeeIdOrNull": None},
+        )
     except Exception as error:
         logger.error("Error while relesing inconvinient spot")
         logger.error(error)
@@ -219,9 +215,7 @@ def release_spot(daystoshare):
     return response.status_code
 
 def logout():
-    #    cookies = get_cookies()
-    data = "{}"
-    response = api_post("https://share.parkanizer.com/api/auth0/logout", data)
+    response = api_post("auth0/logout", {})
     return response.status_code
 
 
@@ -275,7 +269,7 @@ def relogin():
     # Fresh browser, as the old one may still hold login session and skip login page
     quit_driver()
     start_driver()
-    auth["headers"], auth["cookies"] = login()
+    set_auth(*login())
 
 
 def login():
@@ -354,7 +348,7 @@ def booking_decision(date, reserved_spot, free_spots, alreadyreserved):
         return "Whitelisted spot " + reserved_spot + " already reserved for this date"
     if not holds_spot and alreadyreserved:
         return "spot was previously reserved but later released manually via app"
-    if holds_spot and free_spots <= 2:
+    if holds_spot and free_spots <= minFreeSpots:
         return (
             "non Whitelisted spot " + reserved_spot + " already reserved, keeping it as only "
             + str(free_spots) + " free spots left"
@@ -411,11 +405,11 @@ def search_spots(dates):
         for date in dates_to_book:
             iterations[date] += 1
             spots[date] = make_booking(daytotake=str(date))
-        # Refresh number of free spots. If there is 2 or less we need to take it and stop searching
+        # Refresh number of free spots. If there is minFreeSpots or less we need to take it and stop searching
         not_used, free_status = get_spots_status()
         released = []
         for date, spot in spots.items():
-            if spot == None or spot in Whitelist or free_status[date] <= 2:
+            if spot == None or spot in Whitelist or free_status[date] <= minFreeSpots:
                 report_booking(date, spot)
                 continue
             logger.info(
@@ -463,7 +457,7 @@ def search_spots(dates):
 
 
 def parkanizer():
-    auth["headers"], auth["cookies"] = login()
+    set_auth(*login())
 
     # Get status of what you have currently booked
     spots_status, free_status = get_spots_status()
@@ -505,7 +499,7 @@ def parkanizer():
         if reason is not None:
             logger.info("No need to book for: " + str(date) + " - " + reason)
             continue
-        # If reserved spot is not Whitelisted and there is more than 2 free spots open,
+        # If reserved spot is not Whitelisted and there is more than minFreeSpots free spots open,
         # release reservation and search for new Whitelisted spot
         if reserved_spot != "None":
             release_spot(daystoshare=str(date))
@@ -572,7 +566,7 @@ def read_config():
     try:
         config = configparser.ConfigParser()
         config.read(str(sys.argv[1]))
-        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, maxSearchTime, shutdownOnSuccess, logLevel
+        global parkanizer_user, parkanizer_user_id, parkanizer_pass, notify_reminder_gmail, notify_reminder_pushover, notify_booking_outcome_gmail, notify_booking_outcome_pushover, pushover_notify_enabled, pushover_token, pushover_user, pushover_device, gmail_notify_enabled, gmail_user, gmail_password, gmail_to, Whitelist, BookForWeekDay, pauseTime, maxSearchTime, parkingSpotZoneId, minFreeSpots, shutdownOnSuccess, logLevel
         parkanizer_user = config["login"]["parkanizer_user"]
         parkanizer_user_id = parkanizer_user.partition("@")[0].replace(".", "")
         parkanizer_pass = config["login"]["parkanizer_pass"]
@@ -606,6 +600,10 @@ def read_config():
         pauseTime = int(config["booking"]["pauseTime"])
         # 0 = search without time limit
         maxSearchTime = config["booking"].getint("maxSearchTime", fallback=3600)
+        parkingSpotZoneId = config["booking"].get(
+            "parkingSpotZoneId", fallback="fa44ef73-af90-48fb-b2f7-da513a25239e"
+        )
+        minFreeSpots = config["booking"].getint("minFreeSpots", fallback=2)
         logLevel = config["other"]["logLevel"]
         shutdownOnSuccess = config["other"].getboolean(
             "shutdownOnSuccess"

@@ -25,9 +25,9 @@ For every date returned by Parkanizer that is on one of your BookForWeekDay days
 
 - you already hold a Whitelisted spot -> nothing is done
 - you hold nothing, but the script booked this date in the past -> nothing is done (you released it manually)
-- you hold a non Whitelisted spot and 2 or less spots are free -> spot is kept
-- you hold a non Whitelisted spot and more than 2 spots are free -> spot is released and search for Whitelisted spot starts
-- you hold nothing -> spot is booked and, if it's not Whitelisted, search for Whitelisted spot starts (while more than 2 spots are free)
+- you hold a non Whitelisted spot and minFreeSpots (default 2) or less spots are free -> spot is kept
+- you hold a non Whitelisted spot and more than minFreeSpots spots are free -> spot is released and search for Whitelisted spot starts
+- you hold nothing -> spot is booked and, if it's not Whitelisted, search for Whitelisted spot starts (while more than minFreeSpots spots are free)
 
 Search for Whitelisted spot: after releasing non Whitelisted spot script waits until free spots count for that date changes (somebody took the spot that is offered now), then books again. All dates are watched together in one loop, status is refreshed every pauseTime seconds.
 

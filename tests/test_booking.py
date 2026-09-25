@@ -141,6 +141,7 @@ def test_missing_today_in_status_does_not_crash(app):
 def test_booking_decision():
     parkanizer.BookForWeekDay = [1, 2, 3, 4]
     parkanizer.Whitelist = ["1.007"]
+    parkanizer.minFreeSpots = 2
     d = parkanizer.booking_decision
     assert d(MON, "None", 10, False) is None
     assert d(MON, "2", 10, False) is None
@@ -255,3 +256,36 @@ def test_search_time_limit_takes_offered_spot(app):
 
 def test_max_search_time_default(app):
     assert parkanizer.maxSearchTime == 3600
+
+
+def test_zone_id_default_and_json_payload(app):
+    fake = app.run({MON: {"pool": ["1.007", "2", "3"]}})
+    zone = "fa44ef73-af90-48fb-b2f7-da513a25239e"
+    assert {"parkingSpotZoneId": zone} in fake.bodies
+    assert {"dayToTake": "2026-10-05", "parkingSpotZoneId": zone} in fake.bodies
+
+
+def test_zone_id_from_config(app):
+    app.configure(extra_booking="parkingSpotZoneId = my-zone")
+    fake = app.run({MON: {"pool": ["1.007", "2", "3"]}})
+    assert {"parkingSpotZoneId": "my-zone"} in fake.bodies
+
+
+def test_release_payload(app):
+    fake = app.run({MON: {"pool": ["3", "4", "5"], "reserved": "2"}}, on_poll=take_after_release(MON, 3))
+    assert {"daysToShare": ["2026-10-05"], "receivingEmployeeIdOrNull": None} in fake.bodies
+
+
+def test_min_free_spots_from_config(app):
+    app.configure(extra_booking="minFreeSpots = 5")
+    # 5 free after taking "2" -> keep it, no search
+    fake = app.run({MON: {"pool": ["2", "1.007", "3", "4", "5", "6"]}})
+    assert fake.days[MON]["reserved"] == "2"
+    assert fake.count("resign") == 0
+
+
+def test_new_authorization_used_after_relogin(app):
+    fake = app.run({MON: {"pool": ["1.007", "2", "3"]}}, failures=[401])
+    assert fake.auth_headers[0] == "Bearer 1"
+    assert set(fake.auth_headers[1:]) == {"Bearer 2"}
+    assert parkanizer.http.cookies.get("c") == "1"
