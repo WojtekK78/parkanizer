@@ -12,6 +12,7 @@ import requests
 import responses
 
 BASE = "https://share.parkanizer.com/api"
+ZONES = [{"id": "zone-2", "name": "Poziom -2"}, {"id": "zone-3", "name": "Poziom -3"}]
 
 
 class FakeParkanizer:
@@ -31,6 +32,8 @@ class FakeParkanizer:
         self.timeouts = []
         self.bodies = []
         self.auth_headers = []
+        # status returned by take-spot-from-marketplace when set, i.e. "ChallengeTokenMissing"
+        self.take_status = None
 
     # -- simulated other employees -------------------------------------------------
     def someone_takes(self, date):
@@ -58,6 +61,9 @@ class FakeParkanizer:
         failed = self._fail(request)
         if failed:
             return failed
+        if "bookingTimeInterval" not in json.loads(request.body):
+            # like real API since 2026
+            return (400, {}, json.dumps({"invalidProperties": ["bookingTimeInterval"]}))
         self.polls += 1
         if self.polls_since_resign is not None:
             self.polls_since_resign += 1
@@ -86,6 +92,8 @@ class FakeParkanizer:
         failed = self._fail(request)
         if failed:
             return failed
+        if self.take_status:
+            return (200, {}, json.dumps({"status": self.take_status, "receivedParkingSpotOrNull": None}))
         day = self.days[date]
         if day["reserved"]:
             spot = day["reserved"]
@@ -97,7 +105,12 @@ class FakeParkanizer:
         return (
             200,
             {},
-            json.dumps({"receivedParkingSpotOrNull": {"name": spot} if spot else None}),
+            json.dumps(
+                {
+                    "status": "Reserved" if spot else "NoSpotsFound",
+                    "receivedParkingSpotOrNull": {"name": spot} if spot else None,
+                }
+            ),
         )
 
     def _resign(self, request):
@@ -116,7 +129,12 @@ class FakeParkanizer:
 
     def _logout(self, request):
         self.calls.append(("logout", None))
-        return (200, {}, "{}")
+        return (302, {"Location": "https://login.parkanizer.com/logout"}, "")
+
+    def _zones(self, request):
+        self.calls.append(("zones", None))
+        self.bodies.append(json.loads(request.body) if request.body else None)
+        return (200, {}, json.dumps({"parkingSpotZones": ZONES}))
 
     def register(self, rsps):
         rsps.add_callback(responses.POST, BASE + "/marketplace/get-spots", self._get_spots)
@@ -126,7 +144,8 @@ class FakeParkanizer:
             self._take,
         )
         rsps.add_callback(responses.POST, BASE + "/employee-reservations/resign", self._resign)
-        rsps.add_callback(responses.POST, BASE + "/auth0/logout", self._logout)
+        rsps.add_callback(responses.GET, BASE + "/auth0/logout", self._logout)
+        rsps.add_callback(responses.POST, BASE + "/marketplace/get-parking-spot-zones", self._zones)
 
     def count(self, name, date=None):
         return sum(1 for c in self.calls if c[0] == name and (date is None or c[1] == date))
