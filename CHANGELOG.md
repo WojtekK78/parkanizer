@@ -2,6 +2,11 @@
 
 Each entry is one squashed commit on main, so every version can be checked out or reverted on its own (see README "Versions and going back to previous version").
 
+## 4. Lighter HTTP calls and configurable zone
+- One requests.Session for all API calls (connection kept open between polls, auth set once).
+- Request bodies built as JSON by requests instead of string concatenation.
+- New optional config options in [booking]: parkingSpotZoneId (default: previously hardcoded zone) and minFreeSpots (default 2 - search for Whitelisted spot only while more spots than this are free).
+
 ## 3. Robustness
 - All API requests have 30s timeout. Network errors and 5xx responses are retried 3 times (2s, 4s, 8s pauses) instead of stopping the run.
 - When authorization expires (401, i.e. during long search) script logs in again in fresh browser and repeats the request.

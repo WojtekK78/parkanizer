@@ -29,6 +29,8 @@ class FakeParkanizer:
         # list of status codes (or "conn" for network error) returned, one per request, before normal handling
         self.failures = []
         self.timeouts = []
+        self.bodies = []
+        self.auth_headers = []
 
     # -- simulated other employees -------------------------------------------------
     def someone_takes(self, date):
@@ -43,6 +45,8 @@ class FakeParkanizer:
     def _fail(self, request=None):
         if request is not None:
             self.timeouts.append(request.req_kwargs.get("timeout"))
+            self.bodies.append(json.loads(request.body) if request.body else None)
+            self.auth_headers.append(request.headers.get("Authorization"))
         if self.failures:
             code = self.failures.pop(0)
             if code == "conn":
