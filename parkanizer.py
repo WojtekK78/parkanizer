@@ -171,18 +171,6 @@ def release_spot(headers, cookies, daystoshare):
     logger.debug(("Spot from date ", daystoshare, " released"))
     return response.status_code
 
-def wait_for_new_spot(date,headers,cookies):
-    not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
-    avaliable_spots=free_status[date]
-    i = 0
-    while avaliable_spots == free_status[date]:
-        i += 1
-        logger.debug(("Waiting for change in avaliable spots. Date: ", str(date) ," Iteration: ", str(i), ", avaliable_spots: ", str(avaliable_spots), ", free_status[date]: ", str(free_status[date]) ))
-        time.sleep(pauseTime)
-        not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
-        #TODO Improve looping through avaliable spots maybe here returning which spot "day" has been changed
-        #date.isoweekday() in BookForWeekDay
-
 def logout(headers, cookies):
     #    cookies = get_cookies()
     data = "{}"
@@ -299,6 +287,96 @@ def booking_decision(date, reserved_spot, free_spots, alreadyreserved):
     return None
 
 
+def report_booking(date, spot):
+    if spot != None:  # Send success confirmation if we have managed to books spot
+        confirmation = (
+            "Succesfull booking completed for "
+            + date.strftime("%A %B %d")
+            + " spot = "
+            + spot
+            + " check at https://share.parkanizer.com/reservations-list"
+        )
+        title = "Parkanizer " + date.strftime("%a %m-%d") + " spot = " + spot
+        logger.info(confirmation)
+
+        # Writing succefull reservation data to shelve as it'll be used later to check if sombody cancelled and then not to re-do reservation
+        store_reservation(date)
+    else:  # Send failure information if we were unable to book spot
+        confirmation = (
+            "Problem with booking for "
+            + date.strftime("%A %B %d")
+            + " there was no spots avaliable to book !!!. Please check manually at https://share.parkanizer.com/reservations-list"
+        )
+        title = "Parkanizer Problem " + date.strftime("%a %m-%d") + " no spots booked"
+        log_msg = confirmation + " for user " + parkanizer_user
+        logger.warning(log_msg)
+    send_notifications(
+        message=confirmation,
+        title=title,
+        pushover=notify_booking_outcome_pushover,
+        gmail=notify_booking_outcome_gmail,
+    )
+    logger.info("Notifications send")
+
+
+def search_spots(dates, headers, cookies):
+    # Books spot for every date. If booked spot is not in our Whitelist release it and repeat booking untill we will get "Whitelisted".
+    # If spot == None booking was unsuccesful as there was no free spaces so we need to abort.
+    # 20240226 After change of Tidaro API they no longer loop through avaliable spot. Instead they alway provide one spot number until
+    # somebody will book it. Only then they make next one avaliable.
+    # So after releasing non-whitelisted spot we wait (pauseTime) and refresh list of avaliable spots. If number of free spots changed
+    # for that date - somebody booked our non-whitelisted spot - we try again to check if avaliable one is "Whitelisted".
+    # All dates are watched in one loop with one status request per iteration, so waiting for one date doesn't block the others.
+    waiting = {}  # date -> free spots count right after we released our spot
+    iterations = {date: 0 for date in dates}
+    start = time.monotonic()
+
+    def book(dates_to_book):
+        spots = {}
+        for date in dates_to_book:
+            iterations[date] += 1
+            spots[date] = make_booking(headers=headers, cookies=cookies, daytotake=str(date))
+        # Refresh number of free spots. If there is 2 or less we need to take it and stop searching
+        not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
+        released = []
+        for date, spot in spots.items():
+            if spot == None or spot in Whitelist or free_status[date] <= 2:
+                report_booking(date, spot)
+                continue
+            logger.info(
+                "Searching for Whitelisted spot on: " + str(date)
+                + " Iteration: " + str(iterations[date])
+                + " Time spend searching: " + str(timedelta(seconds=round(time.monotonic() - start)))
+                + " Free spaces: " + str(free_status[date])
+                + " Got non Whitelisted spot: " + spot
+            )
+            release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
+            released.append(date)
+        if released:
+            # Wait to get different count of Free spot before moving to next booking try
+            logger.info("Initiated wait for change in free spots avalaiable before next booking try")
+            not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
+            for date in released:
+                waiting[date] = free_status[date]
+
+    book(dates)
+    loop = 0
+    while waiting:
+        loop += 1
+        time.sleep(pauseTime)
+        not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
+        changed = [date for date in waiting if free_status[date] != waiting[date]]
+        logger.debug(
+            "Waiting for change in avaliable spots. Loop: " + str(loop)
+            + ", watched (date: free when released -> now): "
+            + ", ".join(str(d) + ": " + str(waiting[d]) + " -> " + str(free_status[d]) for d in waiting)
+        )
+        for date in changed:
+            del waiting[date]
+        if changed:
+            book(changed)
+
+
 def parkanizer():
     headers, cookies = login()
 
@@ -331,81 +409,28 @@ def parkanizer():
         sys.exit(1)
         return
 
-    # Start booking process
+    # Decide for every date what to do
+    to_book = []
     for date in spots_status:
         reserved_spot = spots_status[date]
         # Did this script already make reservation for that date in past? If so and there is no spot reserved now
         # then someone probably cancelled via app and there is no need to reserve for that day again
         alreadyreserved = was_reserved_before(date)
         reason = booking_decision(date, reserved_spot, free_status[date], alreadyreserved)
-        if reason is None:
-            # If reserved spot is not Whitelisted and there is more than 2 free spots open,
-            # release reservation and search for new Whitelisted spot
-            if reserved_spot != "None":
-                release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
-                logger.info("Released non whitelisted spot: " + reserved_spot + " from: " + date.strftime("%A %B %d"))
-            # We need to book spot
-            logger.info("Start booking process")
-            spot = make_booking(headers=headers, cookies=cookies, daytotake=str(date))
-            # Refresh number of free spots after booking, the ones from start are outdated now
-            not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
-            # If our booked spot is not in our Whitelist release it and repeat booking untill we will get "Whitelisted"
-            # or untill you have "checked" all spots and are getting same spots again (looped through all spaces and none is in our Whitelist)
-            # Also if we have spot == None it means that booking was unsuccesful as there was no free spaces so we need to abort
-            # 20240226 After change of Tidaro API they no longer loop through avaliable spot. Instead they alway provide one spot number until 
-            # somebody will book it. Only then they make next one avaliable.
-            # So if there is no good spot avaliablewe will wait 15 seconds refresh list of avaliable spots. If it has changed - somebody booked our
-            # non-whitelisted spot we will try again to check if avaliable one ie "Whitelisted"
-            i = 0 # loop counter
-            while spot not in Whitelist and spot != None and free_status[date] > 2 :
-                i += 1
-                logger.info("Searching for Whitelisted spot on: " + str (date) + " Iteration: " + str(i) + " Time spend searching: " + str (timedelta(seconds=(i*pauseTime))) + " Free spaces: " + str(free_status[date]))
-                release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
-                # Wait to get different count of Free spot before moving to booking
-                logger.info("Initiated wait for change in free spots avalaiable before next booking try")
-                wait_for_new_spot(date,headers=headers,cookies=cookies)
-                spot = make_booking(
-                    headers=headers, cookies=cookies, daytotake=str(date)
-                )
-                #Refresh number of free spots for that day. If there is 2 we need to take it and stop searching
-                not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
-            if (
-                spot != None
-            ):  # Send success confirmation if we have managed to books spot
-                confirmation = (
-                    "Succesfull booking completed for "
-                    + date.strftime("%A %B %d")
-                    + " spot = "
-                    + spot
-                    + " check at https://share.parkanizer.com/reservations-list"
-                )
-                title = "Parkanizer " + date.strftime("%a %m-%d") + " spot = " + spot
-                logger.info(confirmation)
-
-                # Writing succefull reservation data to shelve as it'll be used later to check if sombody cancelled and then not to re-do reservation
-                store_reservation(date)
-            else:  # Send failure information if we were unable to book spot
-                confirmation = (
-                    "Problem with booking for "
-                    + date.strftime("%A %B %d")
-                    + " there was no spots avaliable to book !!!. Please check manually at https://share.parkanizer.com/reservations-list"
-                )
-                title = (
-                    "Parkanizer Problem "
-                    + date.strftime("%a %m-%d")
-                    + " no spots booked"
-                )
-                log_msg = confirmation + " for user " + parkanizer_user
-                logger.warning(log_msg)
-            send_notifications(
-                message=confirmation,
-                title=title,
-                pushover=notify_booking_outcome_pushover,
-                gmail=notify_booking_outcome_gmail,
-            )
-            logger.info("Notifications send")
-        else:
+        if reason is not None:
             logger.info("No need to book for: " + str(date) + " - " + reason)
+            continue
+        # If reserved spot is not Whitelisted and there is more than 2 free spots open,
+        # release reservation and search for new Whitelisted spot
+        if reserved_spot != "None":
+            release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
+            logger.info("Released non whitelisted spot: " + reserved_spot + " from: " + date.strftime("%A %B %d"))
+        to_book.append(date)
+
+    # Book all dates at once, then keep searching for Whitelisted spots for all of them in one loop
+    if to_book:
+        logger.info("Start booking process for: " + ", ".join(str(d) for d in to_book))
+        search_spots(to_book, headers=headers, cookies=cookies)
 
     logger.info("Done")
     logout(headers=headers, cookies=cookies)

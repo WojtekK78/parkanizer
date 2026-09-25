@@ -2,6 +2,12 @@
 
 Each entry is one squashed commit on main, so every version can be checked out or reverted on its own (see README "Versions and going back to previous version").
 
+## 2. All dates searched in one loop
+- Previously dates were handled one after another and waiting for a better spot on one date (possibly hours) blocked booking of all later dates.
+- Now all dates are booked first, then one loop watches all dates still searching, with one status request per pauseTime, and retries only dates whose free spots count changed.
+- Each date is reported (notification) as soon as it's finished.
+- "Time spend searching" in logs is real elapsed time now.
+
 ## 1. Correctness fixes
 - A non Whitelisted spot booked by the script on an earlier run is no longer released without re-booking (it was lost when the date was in the reservation storage).
 - No "release" call for dates where nothing is reserved.
