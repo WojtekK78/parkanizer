@@ -1,7 +1,8 @@
-"""Integration test with real Chrome + selenium-wire against a local page imitating the web app.
+"""Integration test with real Chrome against a local page imitating the web app.
 
 Skipped when Chrome/chromedriver can't be started.
 """
+import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -53,12 +54,7 @@ def server():
 
 @pytest.fixture
 def browser(app, monkeypatch):
-    # local page only, don't let selenium-wire chain to a system proxy
-    for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(parkanizer, "CAPTURE_SCOPES", [r"http://127\.0\.0\.1:\d+/api/.*"])
-    # Chrome sends localhost traffic around the proxy unless told otherwise
-    arguments = ["--proxy-bypass-list=<-loopback>"]
+    arguments = []
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         arguments.append("--no-sandbox")
     monkeypatch.setattr(parkanizer.cfg, "chrome_arguments", arguments)
@@ -82,11 +78,28 @@ def test_authorization_taken_from_authorized_request(browser, server):
     assert header["Authorization"] in ("Bearer first", "Bearer latest")
 
 
-def test_only_api_requests_are_captured_and_images_blocked(browser, server):
-    # like login(): drop what Chrome itself requested on startup
-    del browser.requests
+def test_images_blocked(browser, server):
     browser.get(server + "/")
     parkanizer.get_req_header()
-    captured = [r.path for r in browser.requests]
-    assert captured and all(path.startswith("/api/") for path in captured)
     assert "/logo.png" not in Handler.hits
+
+
+def log_entry(method, url, headers):
+    message = {"message": {"method": method, "params": {"request": {"url": url, "headers": headers}}}}
+    return {"message": json.dumps(message)}
+
+
+def test_read_authorization_takes_latest_authorized_employee_context():
+    entries = [
+        log_entry("Network.requestWillBeSent", "https://share.parkanizer.com/api/get-employee-context", {}),
+        log_entry("Network.requestWillBeSent", "https://share.parkanizer.com/api/get-employee-context",
+                  {"authorization": "Bearer first"}),
+        log_entry("Network.requestWillBeSent", "https://share.parkanizer.com/api/other",
+                  {"Authorization": "Bearer other"}),
+        log_entry("Network.responseReceived", "https://share.parkanizer.com/api/get-employee-context",
+                  {"Authorization": "Bearer response"}),
+        log_entry("Network.requestWillBeSent", "https://share.parkanizer.com/api/get-employee-context",
+                  {"Authorization": "Bearer latest"}),
+    ]
+    assert parkanizer.read_authorization(entries) == "Bearer latest"
+    assert parkanizer.read_authorization(entries[:1]) is None

@@ -1,8 +1,4 @@
 requests
 notifiers
-selenium-wire
-selenium[login]
-# selenium-wire is not compatible with blinker 1.8+ (ModuleNotFoundError: blinker._saferef)
-blinker<1.8
-# selenium-wire's HTTPS interception uses X509.get_extension removed in pyOpenSSL 24.3 (login token capture fails)
-pyOpenSSL<24.3
+# 4.6+ downloads chromedriver matching installed Chrome automatically
+selenium>=4.6
