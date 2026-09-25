@@ -3,11 +3,6 @@ from notifiers.exceptions import BadArguments
 
 pushover = get_notifier("pushover")
 gmail = get_notifier("gmail")
-gmail.defaults
-{
-    "subject": "Parkanizer notification",
-    "html": False,
-}
 
 
 def pushover_notify(message, title, token, user, device):

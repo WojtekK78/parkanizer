@@ -1,4 +1,6 @@
 requests
 notifiers
 selenium-wire
-selenium
+selenium[login]
+# selenium-wire is not compatible with blinker 1.8+ (ModuleNotFoundError: blinker._saferef)
+blinker<1.8

@@ -196,7 +196,8 @@ def logout(headers, cookies):
 
 
 def send_notifications(message, title, gmail=True, pushover=True):
-    if pushover:
+    # gmail_notify_enabled / pushover_notify_enabled are master switches for each channel
+    if pushover and pushover_notify_enabled:
         pushover_notify(
             message,
             title,
@@ -204,7 +205,7 @@ def send_notifications(message, title, gmail=True, pushover=True):
             pushover_user,
             pushover_device,
         )
-    if gmail:
+    if gmail and gmail_notify_enabled:
         gmail_notify(
             message=message,
             title=title,
@@ -214,8 +215,7 @@ def send_notifications(message, title, gmail=True, pushover=True):
         )
 
 
-def parkanizer():
-
+def login():
     # Login into page and get proper authntication cookies and headers for later usage
     try:
         driver.delete_all_cookies()
@@ -247,8 +247,60 @@ def parkanizer():
         return
 
     # logged in, now getting headers and cookies
-    headers = get_req_header()
-    cookies = get_cookies()
+    return get_req_header(), get_cookies()
+
+
+def reservation_keys(date):
+    # ISO date is the key used now. Older versions used "%A %B %d" (no year) which repeats
+    # across years, it's still checked so reservations stored by older versions are honoured.
+    return date.isoformat(), date.strftime("%A %B %d")
+
+
+def was_reserved_before(date):
+    try:
+        shelve_db = "./shelve/reservations_" + parkanizer_user_id + ".db"
+        with shelve.open(shelve_db) as reservationshelve:
+            return any(key in reservationshelve for key in reservation_keys(date))
+    except Exception as error:
+        logger.error(
+            "Error while checking if reservation was already made in past for user"
+        )
+        logger.error(error)
+        sys.exit(1)
+
+
+def store_reservation(date):
+    try:
+        shelve_db = "./shelve/reservations_" + parkanizer_user_id + ".db"
+        with shelve.open(shelve_db) as reservationshelve:
+            key, legacy_value = reservation_keys(date)
+            # value kept in old format so older versions (which check values) still see it after rollback
+            reservationshelve[key] = legacy_value
+    except Exception as error:
+        logger.error("Problem in writing reservation to storage")
+        logger.error(error)
+        sys.exit(1)
+
+
+def booking_decision(date, reserved_spot, free_spots, alreadyreserved):
+    # Returns None if booking process should start for date, otherwise reason why not
+    holds_spot = reserved_spot != "None"
+    if date.isoweekday() not in BookForWeekDay:
+        return "day not configured for booking"
+    if holds_spot and reserved_spot in Whitelist:
+        return "Whitelisted spot " + reserved_spot + " already reserved for this date"
+    if not holds_spot and alreadyreserved:
+        return "spot was previously reserved but later released manually via app"
+    if holds_spot and free_spots <= 2:
+        return (
+            "non Whitelisted spot " + reserved_spot + " already reserved, keeping it as only "
+            + str(free_spots) + " free spots left"
+        )
+    return None
+
+
+def parkanizer():
+    headers, cookies = login()
 
     # Get status of what you have currently booked
     spots_status, free_status = get_spots_status(headers=headers, cookies=cookies)
@@ -258,7 +310,7 @@ def parkanizer():
     # Send reminder if you have already booked place for Today
     try:
         today = datetime.now().date()
-        if spots_status[today] != "None":
+        if spots_status.get(today, "None") != "None":
             send_notifications(
                 message="Remember you have spot "
                 + spots_status[today]
@@ -281,34 +333,22 @@ def parkanizer():
 
     # Start booking process
     for date in spots_status:
-        # If reserved spot is not Whitelisted for days we are looking and there is more than 2 free spots open release reservation and search for new Whitelisted spot
-        # then relese this spot, wait and 
-        if ( date.isoweekday() in BookForWeekDay and spots_status[date] not in Whitelist and free_status[date] >2 ):
-            release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
-            logger.info("Released non whitelisted spot: " + str(spots_status[date]) + " from: " + date.strftime("%A %B %d"))
-        # Setting status of alreadyreserved if we already have made reservation in past. If so then someone probably cancelled and there is no need to reserve for that day again
-        try:
-            shelve_db = "./shelve/reservations_" + parkanizer_user_id + ".db"
-            reservationcheck = date.strftime("%A %B %d")
-            reservationshelve = shelve.open(shelve_db)
-            alreadyreserved = reservationcheck in list(reservationshelve.values())
-            reservationshelve.close()
-        except Exception as error:
-            logger.error(
-                "Error while checking if reservation was already made in past for user"
-            )
-            logger.error(error)
-            sys.exit(1)
-            return
-        # Check if for days enabled in config we have already spot reserved, if there is not then start booking porcess
-        if (
-            date.isoweekday() in BookForWeekDay
-            and (spots_status[date] == "None" or spots_status[date] not in Whitelist)
-            and not alreadyreserved
-        ):
+        reserved_spot = spots_status[date]
+        # Did this script already make reservation for that date in past? If so and there is no spot reserved now
+        # then someone probably cancelled via app and there is no need to reserve for that day again
+        alreadyreserved = was_reserved_before(date)
+        reason = booking_decision(date, reserved_spot, free_status[date], alreadyreserved)
+        if reason is None:
+            # If reserved spot is not Whitelisted and there is more than 2 free spots open,
+            # release reservation and search for new Whitelisted spot
+            if reserved_spot != "None":
+                release_spot(headers=headers, cookies=cookies, daystoshare=str(date))
+                logger.info("Released non whitelisted spot: " + reserved_spot + " from: " + date.strftime("%A %B %d"))
             # We need to book spot
             logger.info("Start booking process")
             spot = make_booking(headers=headers, cookies=cookies, daytotake=str(date))
+            # Refresh number of free spots after booking, the ones from start are outdated now
+            not_used, free_status = get_spots_status(headers=headers, cookies=cookies)
             # If our booked spot is not in our Whitelist release it and repeat booking untill we will get "Whitelisted"
             # or untill you have "checked" all spots and are getting same spots again (looped through all spaces and none is in our Whitelist)
             # Also if we have spot == None it means that booking was unsuccesful as there was no free spaces so we need to abort
@@ -343,17 +383,7 @@ def parkanizer():
                 logger.info(confirmation)
 
                 # Writing succefull reservation data to shelve as it'll be used later to check if sombody cancelled and then not to re-do reservation
-                try:
-                    shelve_db = "./shelve/reservations_" + parkanizer_user_id + ".db"
-                    reservationcheck = date.strftime("%A %B %d")
-                    reservationshelve = shelve.open(shelve_db)
-                    reservationshelve[reservationcheck] = reservationcheck
-                    reservationshelve.close()
-                except Exception as error:
-                    logger.error("Problem in writing reservation to storage")
-                    logger.error(error)
-                    sys.exit(1)
-                    return
+                store_reservation(date)
             else:  # Send failure information if we were unable to book spot
                 confirmation = (
                     "Problem with booking for "
@@ -375,15 +405,7 @@ def parkanizer():
             )
             logger.info("Notifications send")
         else:
-            reason = ""
-            if not date.isoweekday() in BookForWeekDay:
-                reason = " - day not configured for booking"
-            if alreadyreserved:
-                reason = " - spot was previously reserved but later released manually via app"
-            if not spots_status[date] == "None":
-                reason = " - spot already reserved for this date"
-            confirmation = "No need to book for: " + str(date) + reason
-            logger.info(confirmation)
+            logger.info("No need to book for: " + str(date) + " - " + reason)
 
     logger.info("Done")
     logout(headers=headers, cookies=cookies)
@@ -482,11 +504,12 @@ def read_config():
 
 if __name__ == "__main__":
     try:
-        if str(sys.argv[1]).find(".ini") < 1:
-            print('Please provide any ".ini" file as first parameter')
-    except Exception as error:
+        config_file = str(sys.argv[1])
+    except IndexError:
+        config_file = ""
+    if config_file.find(".ini") < 1:
         print('Please provide any ".ini" file as first parameter')
-        sys.exit()
+        sys.exit(1)
 
     read_config()
     initialize_logger()
