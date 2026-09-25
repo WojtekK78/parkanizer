@@ -2,6 +2,11 @@
 
 Each entry is one squashed commit on main, so every version can be checked out or reverted on its own (see README "Versions and going back to previous version").
 
+## 9. README: installation, update and deployment
+- Steps for updating existing installation after Tidaro 2026 changes (requirements, removing old parkingSpotZoneId, stale chromedriver).
+- Optional config options and reCAPTCHA limitation described.
+- Deployment: fixed crontab example, DISPLAY no longer needed (headless), systemd unit with absolute python path, network-online dependency, daily timer example.
+
 ## 8. Follow current Tidaro API
 - get-spots and take-spot-from-marketplace send bookingTimeInterval (whole day) like the web app; get-spots failed with 400 "invalidProperties: bookingTimeInterval" without it.
 - parkingSpotZoneId not set -> first zone avaliable to user is used (from get-parking-spot-zones), all zones with ids are logged at INFO. The previously hardcoded default zone answers 403 for current accounts.
